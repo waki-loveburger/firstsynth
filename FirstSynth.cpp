@@ -1,0 +1,914 @@
+#include "FirstSynth.h"
+#include "IPlug_include_in_plug_src.h"
+#include "IPlugPaths.h"
+#include "LFO.h"
+#include <cmath>
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include <string>
+#include <filesystem>
+
+FirstSynth::FirstSynth(const InstanceInfo& info)
+: iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
+{
+  GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
+  GetParam(kParamNoteGlideTime)->InitDouble("Note Glide Time", 0., 0., 2000., 0.1, "ms", IParam::kFlagsNone, "", IParam::ShapePowCurve(3.));
+  GetParam(kParamAttack)->InitDouble("Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
+  GetParam(kParamRelease)->InitDouble("Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamLFOShape)->InitEnum("Pitch LFO Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
+  GetParam(kParamLFORateHz)->InitFrequency("Pitch LFO Rate", 1., 0.01, 40.);
+  GetParam(kParamLFORateTempo)->InitEnum("Pitch LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  GetParam(kParamLFORateMode)->InitBool("Pitch LFO Sync", true);
+  GetParam(kParamLFODepth)->InitDouble("Pitch LFO Depth", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "PITCH LFO", IParam::ShapePowCurve(2.));
+  GetParam(kParamOsc1Wave)->InitDouble("Osc 1 Wave", 0., 0., 4., 0.01, "", IParam::kFlagsNone, "OSC1");
+  GetParam(kParamOsc1Octave)->InitInt("Osc 1 Octave", 0, -4, 4, "", IParam::kFlagsNone, "OSC1");
+  GetParam(kParamOsc1Semi)->InitInt("Osc 1 Semitone", 0, -12, 12, "", IParam::kFlagsNone, "OSC1");
+  GetParam(kParamOsc1Fine)->InitDouble("Osc 1 Fine", 0., -100., 100., 0.1, "ct", IParam::kFlagsNone, "OSC1");
+  GetParam(kParamOsc2Wave)->InitDouble("Osc 2 Wave", 0., 0., 4., 0.01, "", IParam::kFlagsNone, "OSC2");
+  GetParam(kParamOsc2Octave)->InitInt("Osc 2 Octave", 0, -4, 4, "", IParam::kFlagsNone, "OSC2");
+  GetParam(kParamOsc2Semi)->InitInt("Osc 2 Semitone", 0, -12, 12, "", IParam::kFlagsNone, "OSC2");
+  GetParam(kParamOsc2Fine)->InitDouble("Osc 2 Fine", 0., -100., 100., 0.1, "ct", IParam::kFlagsNone, "OSC2");
+  GetParam(kParamMixOsc1)->InitDouble("Osc 1 Level", 100., 0., 100., 0.01, "%", IParam::kFlagsNone, "MIX");
+  GetParam(kParamMixOsc2)->InitDouble("Osc 2 Level", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "MIX");
+  GetParam(kParamMixNoise)->InitDouble("Noise Level", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "MIX", IParam::ShapePowCurve(2.));
+  GetParam(kParamFilterCutoff)->InitFrequency("Cutoff", 10000., 20., 20000.);
+  // pow-curve so the knob's low/left end (where Q, mapped linearly from this value in
+  // FirstSynth_DSP.h, is most audibly sensitive) gets more turning range - same fix
+  // already applied to Noise Level for the same "too strong near the left" complaint
+  GetParam(kParamFilterResonance)->InitDouble("Resonance", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "FILTER", IParam::ShapePowCurve(2.));
+  // Was a continuous 0-2 LP-BP-HP blend (InitDouble); now a discrete 3-way
+  // choice (InitEnum) - LP now runs a Moog ladder instead of the SVF (see
+  // FirstSynth_DSP.h's ProcessMoogLadder/mFilterType comments), which isn't
+  // blendable against the SVF's Band/High outputs the way the old LP (also
+  // SVF) was, so continuous sweeping across all three was dropped rather than
+  // half-preserved. Same 0/1/2 value range as before, so old saved presets'
+  // exact LP/BP/HP settings (0.0/1.0/2.0) still land correctly - only presets
+  // that had it mid-sweep (a blended value) will snap to the nearest of the three.
+  GetParam(kParamFilterType)->InitEnum("Filter Type", 0, {"LP (Moog)", "BP", "HP"}, IParam::kFlagsNone, "FILTER");
+  // No longer wired to anything (BP/HP is unconditionally 24dB now, LP's Moog
+  // ladder always was) - the UI toggle was removed per user request. Left
+  // registered, not deleted, to preserve every later param's index (see
+  // kParamFilterType's own comment above for why that matters for presets).
+  GetParam(kParamFilterSlope)->InitBool("24dB Slope", false, "", IParam::kFlagsNone, "FILTER");
+  // 0-100%: scales how much the note's own pitch shifts the cutoff (in the same
+  // octave-additive way Env Amount/Filter LFO already do) - at 100%, cutoff tracks
+  // the keyboard 1:1 (up an octave in pitch = cutoff up an octave), at 0% (default)
+  // the filter behaves exactly as before (fixed cutoff regardless of note played)
+  // Max raised 100->150% per user request - lets the filter over-track the
+  // keyboard (cutoff rises faster than 1:1 with pitch) for an extra-bright
+  // high end, not just the normal 1:1-at-100% tracking.
+  GetParam(kParamFilterKeyFollow)->InitDouble("Key Follow", 0., 0., 150., 0.01, "%", IParam::kFlagsNone, "FILTER");
+  GetParam(kParamFilterEnvAmount)->InitDouble("Env Amount", 0., -100., 100., 0.01, "%", IParam::kFlagsNone, "FILTER");
+  GetParam(kParamFilterAttack)->InitDouble("Filter Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamFilterDecay)->InitDouble("Filter Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamFilterSustain)->InitDouble("Filter Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "FILTER ADSR");
+  GetParam(kParamFilterRelease)->InitDouble("Filter Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamFilterLFOShape)->InitEnum("Filter LFO Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
+  GetParam(kParamFilterLFORateHz)->InitFrequency("Filter LFO Rate", 1., 0.01, 40.);
+  GetParam(kParamFilterLFORateTempo)->InitEnum("Filter LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  GetParam(kParamFilterLFORateMode)->InitBool("Filter LFO Sync", true);
+  GetParam(kParamFilterLFODepth)->InitDouble("Filter LFO Depth", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "FILTER LFO", IParam::ShapePowCurve(2.));
+  GetParam(kParamAmpLFOShape)->InitEnum("Amp LFO Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
+  GetParam(kParamAmpLFORateHz)->InitFrequency("Amp LFO Rate", 1., 0.01, 40.);
+  GetParam(kParamAmpLFORateTempo)->InitEnum("Amp LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  GetParam(kParamAmpLFORateMode)->InitBool("Amp LFO Sync", true);
+  GetParam(kParamAmpLFODepth)->InitDouble("Amp LFO Depth", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "AMP LFO", IParam::ShapePowCurve(2.));
+  GetParam(kParamChorusRate)->InitFrequency("Chorus Rate", 0.5, 0.05, 5.);
+  GetParam(kParamChorusDepth)->InitDouble("Chorus Depth", 50., 0., 100., 0.01, "%", IParam::kFlagsNone, "CHORUS");
+  GetParam(kParamChorusMix)->InitDouble("Chorus Mix", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "CHORUS");
+  GetParam(kParamDelayTime)->InitDouble("Delay Time", 300., 10., 2000., 0.1, "ms", IParam::kFlagsNone, "DELAY", IParam::ShapePowCurve(2.));
+  // was capped at 95 (a leftover caution from when this project's other feedback-style
+  // params, like the filter, could genuinely blow up at extreme values) - a plain delay
+  // feedback loop at exactly 1.0 is perfectly stable (each repeat stays at constant
+  // amplitude forever - a "freeze"/infinite-sustain effect, not a runaway), so 100 is
+  // safe. User noticed the knob's max didn't actually reach true 100% feedback.
+  GetParam(kParamDelayFeedback)->InitDouble("Delay Feedback", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "DELAY");
+  GetParam(kParamDelayMix)->InitDouble("Delay Mix", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "DELAY");
+  GetParam(kParamDelayPingPong)->InitBool("Delay Ping Pong", false, "", IParam::kFlagsNone, "DELAY");
+  GetParam(kParamReverbDecay)->InitDouble("Reverb Decay", 50., 0., 100., 0.01, "%", IParam::kFlagsNone, "REVERB");
+  GetParam(kParamReverbDamping)->InitDouble("Reverb Damping", 50., 0., 100., 0.01, "%", IParam::kFlagsNone, "REVERB");
+  GetParam(kParamReverbMix)->InitDouble("Reverb Mix", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "REVERB");
+  GetParam(kParamLooperReverse)->InitBool("Looper Reverse", false, "", IParam::kFlagsNone, "LOOPER");
+  // Speed removed 2026-07-22 - see FirstSynth_Looper.h's class comment and FirstSynth.h's
+  // kParamLooperSpeed comment for why (variable-speed overdub-recording aliases/loses
+  // information no matter how it's filtered).
+  GetParam(kParamLooperFeedback)->InitDouble("Looper Feedback", 100., 0., 100., 0.01, "%", IParam::kFlagsNone, "LOOPER");
+  GetParam(kParamLooperMix)->InitDouble("Looper Mix", 100., 0., 100., 0.01, "%", IParam::kFlagsNone, "LOOPER");
+  GetParam(kParamBassBoost)->InitDouble("Bass Boost", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "");
+  // 0-100%: width of a per-note random draw (fresh each NoteOn, not a continuous LFO -
+  // same "width, not speed" Yuragi concept as SuiKinKutsu) applied to both pitch
+  // (+-1.2 semitones at 100%) and stereo pan (full L-R field at 100%, dead center at 0%)
+  GetParam(kParamYuragi)->InitDouble("Yuragi", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "");
+  // 5-band EQ, last in the master effects chain - see FirstSynth_Effects.h's
+  // ParametricEQEffect. Band gains default to 0dB (no coloration until touched);
+  // freqs spread roughly evenly on a log scale across the audible range.
+  // Defaults below are the user's own tuned EQ curve, adopted 2026-07-27 as 1st
+  // Synth's baseline sound identity (was flat/0dB on every band before) - see
+  // progress.md's "5-band EQ defaults adopted from the user's tuned state" entry.
+  GetParam(kParamEQLowFreq)->InitFrequency("EQ Low Freq", 125., 20., 20000.);
+  GetParam(kParamEQLowGain)->InitDouble("EQ Low Gain", 3.12, -15., 15., 0.01, "dB", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBand2Freq)->InitFrequency("EQ Band2 Freq", 317., 20., 20000.);
+  GetParam(kParamEQBand2Gain)->InitDouble("EQ Band2 Gain", 1.92, -15., 15., 0.01, "dB", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBand2Q)->InitDouble("EQ Band2 Q", 0.78, 0.1, 10., 0.01, "", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBand3Freq)->InitFrequency("EQ Band3 Freq", 1000., 20., 20000.);
+  GetParam(kParamEQBand3Gain)->InitDouble("EQ Band3 Gain", -3.36, -15., 15., 0.01, "dB", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBand3Q)->InitDouble("EQ Band3 Q", 1.02, 0.1, 10., 0.01, "", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBand4Freq)->InitFrequency("EQ Band4 Freq", 1726., 20., 20000.);
+  GetParam(kParamEQBand4Gain)->InitDouble("EQ Band4 Gain", 5.04, -15., 15., 0.01, "dB", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBand4Q)->InitDouble("EQ Band4 Q", 0.62, 0.1, 10., 0.01, "", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQHighFreq)->InitFrequency("EQ High Freq", 4865., 20., 20000.);
+  GetParam(kParamEQHighGain)->InitDouble("EQ High Gain", 3.60, -15., 15., 0.01, "dB", IParam::kFlagsNone, "EQ");
+
+  // Modulation Matrix (2026-07-28) - 2 free LFOs + 2 free ADSR envelopes (not
+  // hard-wired to any single destination, unlike Pitch/Filter/Amp LFO above) plus
+  // 4 matrix slots routing a fixed source list to a fixed destination list at a
+  // bipolar amount. See FirstSynth_DSP.h's EMatrixSource/EMatrixDest for the
+  // routing logic - the string lists below must stay in that exact same order.
+  GetParam(kParamModLFO1Shape)->InitEnum("Mod LFO 1 Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
+  GetParam(kParamModLFO1RateHz)->InitFrequency("Mod LFO 1 Rate", 1., 0.01, 40.);
+  GetParam(kParamModLFO1RateTempo)->InitEnum("Mod LFO 1 Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  GetParam(kParamModLFO1RateMode)->InitBool("Mod LFO 1 Sync", true);
+  GetParam(kParamModLFO2Shape)->InitEnum("Mod LFO 2 Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
+  GetParam(kParamModLFO2RateHz)->InitFrequency("Mod LFO 2 Rate", 1., 0.01, 40.);
+  GetParam(kParamModLFO2RateTempo)->InitEnum("Mod LFO 2 Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  GetParam(kParamModLFO2RateMode)->InitBool("Mod LFO 2 Sync", true);
+  GetParam(kParamModEnv1Attack)->InitDouble("Mod Env 1 Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv1Decay)->InitDouble("Mod Env 1 Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv1Sustain)->InitDouble("Mod Env 1 Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamModEnv1Release)->InitDouble("Mod Env 1 Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv2Attack)->InitDouble("Mod Env 2 Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv2Decay)->InitDouble("Mod Env 2 Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv2Sustain)->InitDouble("Mod Env 2 Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamModEnv2Release)->InitDouble("Mod Env 2 Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamMatrix1Source)->InitEnum("Matrix 1 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix1Dest)->InitEnum("Matrix 1 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix1Amount)->InitDouble("Matrix 1 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix2Source)->InitEnum("Matrix 2 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix2Dest)->InitEnum("Matrix 2 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix2Amount)->InitDouble("Matrix 2 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix3Source)->InitEnum("Matrix 3 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix3Dest)->InitEnum("Matrix 3 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix3Amount)->InitDouble("Matrix 3 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix4Source)->InitEnum("Matrix 4 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix4Dest)->InitEnum("Matrix 4 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix4Amount)->InitDouble("Matrix 4 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  // 4 -> 8 slots (2026-07-28 user request) - same source/dest lists as slots 1-4 above.
+  GetParam(kParamMatrix5Source)->InitEnum("Matrix 5 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix5Dest)->InitEnum("Matrix 5 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix5Amount)->InitDouble("Matrix 5 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix6Source)->InitEnum("Matrix 6 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix6Dest)->InitEnum("Matrix 6 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix6Amount)->InitDouble("Matrix 6 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix7Source)->InitEnum("Matrix 7 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix7Dest)->InitEnum("Matrix 7 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix7Amount)->InitDouble("Matrix 7 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix8Source)->InitEnum("Matrix 8 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix8Dest)->InitEnum("Matrix 8 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
+  GetParam(kParamMatrix8Amount)->InitDouble("Matrix 8 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  // Default changed to 2 semitones (whole tone, the common convention) per user
+  // request after confirming the knob works - the framework's own default of 12
+  // (MidiSynth.h's kDefaultPitchBendRange) was only kept as this param's initial
+  // default while first verifying the control, not a deliberate choice.
+  GetParam(kParamPitchBendRange)->InitInt("Bend Range", 2, 0, 12, "st", IParam::kFlagsNone, "MIX");
+  // -100 = exponential, 0 = linear/proportional, +100 = logarithmic - see
+  // FirstSynth_DSP.h's Voice::Trigger() for the actual curve math. Default -37.6
+  // (leaning toward exponential) per user's own tuning, after confirming the
+  // knob's full range worked correctly.
+  GetParam(kParamVelocityCurve)->InitDouble("Velocity Curve", -37.6, -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+
+#ifdef WEBVIEW_EDITOR_DELEGATE
+  SetEnableDevTools(true);
+
+  // The initial params-sync message (every param's name/min/max/default, base64-
+  // encoded, sent as one JS call - see IPlugWebViewEditorDelegate::OnWebContentLoaded)
+  // is capped by this buffer (default 8192 chars) and got silently TRUNCATED once this
+  // project passed ~50 params - a truncated base64 string fails window.atob()/
+  // JSON.parse() in index.html's OnMessage(), which silently aborted the *entire*
+  // params-sync case with no visible error, leaving every single knob's min/max stuck
+  // at knob-control.js's constructor fallback (0/100) forever. Symptom: DSP/audio
+  // behavior was completely unaffected (ProcessBlock reads real IParam values
+  // directly, never touches this JS-side cache), but every displayed number was
+  // silently wrong against the true param range - most knobs happened to still
+  // look plausible with a 0-100 fallback, but a bipolar knob like Filter Env Amount
+  // showing "50%" at center (instead of 0%) is what finally made it obvious. Raised
+  // generously past any size this project is likely to reach.
+  SetMaxJSStringLength(32768);
+
+  mEditorInitFunc = [&]()
+  {
+    LoadIndexHtml(__FILE__, GetBundleID());
+    EnableScroll(false);
+  };
+#endif
+}
+
+#if IPLUG_DSP
+void FirstSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
+{
+  // mTimeInfo.mTempo is a real host-reported tempo for every other target (CLAP/VST3/
+  // AU/AAX/VST2), but the Standalone app has no host transport to report one - it just
+  // sits at IPlugStructs.h's DEFAULT_TEMPO (120) forever, regardless of user input.
+  // mStandaloneTempo (settable via kMsgTagSetStandaloneTempo, see OnMessage() below) is
+  // the Standalone-only substitute.
+#ifdef APP_API
+  const double tempo = mStandaloneTempo.load(std::memory_order_relaxed);
+#else
+  const double tempo = mTimeInfo.mTempo;
+#endif
+  mDSP.ProcessBlock(nullptr, outputs, 2, nFrames, mTimeInfo.mPPQPos, mTimeInfo.mTransportIsRunning, tempo);
+
+  for (int s = 0; s < nFrames; s++)
+  {
+    mBassBoost.Process(outputs[0][s], outputs[1][s]);
+    mChorus.Process(outputs[0][s], outputs[1][s]);
+    mDelay.Process(outputs[0][s], outputs[1][s]);
+    mReverb.Process(outputs[0][s], outputs[1][s]);
+    mEQ.Process(outputs[0][s], outputs[1][s]);
+
+    if (mLooper.Process(outputs[0][s], outputs[1][s]))
+    {
+      mLooperStateDirty.store(true, std::memory_order_relaxed);
+      mLooperWaveformDirty.store(true, std::memory_order_relaxed); // only fires on the 40s auto-stop, which just finalized a recording
+    }
+
+    // Level/clip meter (user request: "歪んでるかどうか知るためのメーターが必要") -
+    // track the true final output's peak (post Gain, post all effects/looper)
+    // as a lock-free running max, read and reset once per OnIdle tick below. A CAS
+    // loop is used (not a plain store) since this can race with OnIdle()'s exchange
+    // on the main thread; the loop only needs to retry when a *larger* peak lands
+    // concurrently, which is rare and cheap.
+    double peak = std::max(std::abs(outputs[0][s]), std::abs(outputs[1][s]));
+    double cur = mMeterPeak.load(std::memory_order_relaxed);
+    while (peak > cur && !mMeterPeak.compare_exchange_weak(cur, peak, std::memory_order_relaxed))
+      ;
+  }
+}
+
+void FirstSynth::OnReset()
+{
+  mDSP.Reset(GetSampleRate(), GetBlockSize());
+  mBassBoost.SetSampleRate(GetSampleRate());
+  mChorus.SetSampleRate(GetSampleRate());
+  mDelay.SetSampleRate(GetSampleRate());
+  mReverb.SetSampleRate(GetSampleRate());
+  mEQ.SetSampleRate(GetSampleRate());
+  mLooper.SetSampleRate(GetSampleRate());
+}
+
+// Cross-format preset browser - see kMsgTagPresetList's comment in FirstSynth.h for
+// why this exists alongside the Standalone-only autosave/manual-preset-dialog
+// mechanisms rather than replacing them: same underlying SerializeState()/
+// UnserializeState() chunk, just stored in one fixed shared folder and exposed
+// through the WebView UI in every build.
+void FirstSynth::GetPresetsDir(WDL_String& path)
+{
+  INIPath(path, "FirstSynth");
+  path.Append("\\Presets");
+
+  std::error_code ec;
+  std::filesystem::create_directories(path.Get(), ec); // no-op if it already exists; ec deliberately ignored, matches this file's other fopen()-and-check-for-null style rather than throwing
+}
+
+// Preset names double as filenames and arrive from free-text WebView input (UTF8,
+// e.g. Japanese preset names) - this is the actual boundary between "arbitrary UI
+// text" and "a real filesystem path". A byte-blacklist, not an ASCII allow-list:
+// only reject actual path separators, reserved Windows filename characters, and
+// ASCII control bytes - every UTF8 multi-byte sequence (any non-ASCII character,
+// high bit set) passes through untouched, so non-English preset names work. The
+// mandatory ".preset" suffix appended by the callers already neutralizes ".." as a
+// traversal risk (the resulting filename is never literally ".."), so no separate
+// check for it is needed as long as no path separator can appear here.
+void FirstSynth::SanitizePresetName(const char* rawName, WDL_String& outSafeName)
+{
+  outSafeName.Set("");
+
+  if (!rawName)
+    return;
+
+  for (int i = 0; rawName[i] != '\0' && outSafeName.GetLength() < 128; i++)
+  {
+    unsigned char c = (unsigned char) rawName[i];
+    bool rejected = c < 0x20 || c == 0x7f ||
+                    c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' ||
+                    c == '"' || c == '<' || c == '>' || c == '|';
+    if (!rejected)
+      outSafeName.AppendFormatted(2, "%c", (char) c);
+  }
+
+  // trim any trailing spaces left over from a rejected trailing character
+  while (outSafeName.GetLength() > 0 && outSafeName.Get()[outSafeName.GetLength() - 1] == ' ')
+    outSafeName.DeleteSub(outSafeName.GetLength() - 1, 1);
+}
+
+void FirstSynth::SendPresetList()
+{
+  WDL_String dir;
+  GetPresetsDir(dir);
+
+  int foundCount = 0;
+  int rawCount = 0; // every entry the OS-level enumeration yields, before any filtering
+  WDL_String joined;
+  WDL_String rawEntries; // one "<filename>:isRegularFile:<ext>" per raw entry, semicolon-joined
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator(dir.Get(), ec))
+  {
+    rawCount++;
+    auto p = entry.path();
+    if (rawEntries.GetLength() > 0)
+      rawEntries.Append("; ");
+    rawEntries.AppendFormatted(300, "%s:%d:%s", p.filename().string().c_str(), (int) entry.is_regular_file(), p.extension().string().c_str());
+
+    if (ec || !entry.is_regular_file())
+      continue;
+
+    if (p.extension() != ".preset")
+      continue;
+
+    foundCount++;
+    if (joined.GetLength() > 0)
+      joined.Append("\n");
+    joined.Append(p.stem().string().c_str());
+  }
+
+  // temporary diagnostic (2026-07-28) - a VST3/CLAP-hosted instance only ever finds
+  // whatever preset *it itself* most recently saved, never presets other processes
+  // wrote to the same folder earlier (confirmed: Standalone finds 2, a fresh VST3
+  // instance in either Renoise or BespokeSynth finds only the 1 it just saved
+  // itself, even after a full DAW restart) - logging every *raw* entry the OS-level
+  // enumeration yields (rawCount/rawEntries), not just the post-filter count, to
+  // tell apart "the OS itself only shows this process 1 file" from "my own
+  // is_regular_file()/extension filtering is incorrectly rejecting the other 2".
+  WDL_String debugDir;
+  for (int i = 0; i < dir.GetLength(); i++)
+  {
+    char c = dir.Get()[i];
+    debugDir.AppendFormatted(2, "%c", c == '\\' ? '/' : c); // avoid JS string-escaping the backslashes
+  }
+  WDL_String debugMsg;
+  debugMsg.SetFormatted(1200, "console.log('FirstSynth presets dir: %s | ec=%d (%s) | rawCount=%d | rawEntries=[%s] | found=%d');",
+                        debugDir.Get(), ec.value(), ec.message().c_str(), rawCount, rawEntries.Get(), foundCount);
+  EvaluateJavaScript(debugMsg.Get());
+
+  SendArbitraryMsgFromDelegate(kMsgTagPresetList, joined.GetLength(), joined.Get());
+}
+
+void FirstSynth::SavePresetAs(const char* rawName)
+{
+  WDL_String safeName;
+  SanitizePresetName(rawName, safeName);
+  if (safeName.GetLength() == 0)
+    return;
+
+  WDL_String dir;
+  GetPresetsDir(dir);
+
+  WDL_String path;
+  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+
+  IByteChunk chunk;
+  if (SerializeState(chunk))
+  {
+    FILE* fp = fopen(path.Get(), "wb");
+    if (fp)
+    {
+      fwrite(chunk.GetData(), 1, (size_t) chunk.Size(), fp);
+      fclose(fp);
+    }
+  }
+
+  SendPresetList(); // refresh the UI's dropdown so the just-saved preset shows up immediately
+}
+
+void FirstSynth::LoadPresetByName(const char* rawName)
+{
+  WDL_String safeName;
+  SanitizePresetName(rawName, safeName);
+  if (safeName.GetLength() == 0)
+    return;
+
+  WDL_String dir;
+  GetPresetsDir(dir);
+
+  WDL_String path;
+  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+
+  FILE* fp = fopen(path.Get(), "rb");
+  if (!fp)
+    return;
+
+  fseek(fp, 0, SEEK_END);
+  long fileSize = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
+
+  if (fileSize > 0)
+  {
+    std::vector<uint8_t> buf((size_t) fileSize);
+    fread(buf.data(), 1, buf.size(), fp);
+
+    IByteChunk chunk;
+    chunk.PutBytes(buf.data(), (int) buf.size());
+    UnserializeState(chunk, 0);
+    OnRestoreState(); // pushes every restored param's new value to the WebView UI - same combo LoadAutoState() below uses
+  }
+
+  fclose(fp);
+}
+
+// 2026-07-30 user request (ported from SuiKinKutsu, same day): delete a preset
+// from the GUI. Reuses the same sanitize-then-build-path pattern as Save/Load -
+// std::filesystem::remove() silently returns false (no exception) if the file
+// doesn't exist, which is fine here (nothing to do).
+void FirstSynth::DeletePresetByName(const char* rawName)
+{
+  WDL_String safeName;
+  SanitizePresetName(rawName, safeName);
+  if (safeName.GetLength() == 0)
+    return;
+
+  WDL_String dir;
+  GetPresetsDir(dir);
+
+  WDL_String path;
+  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+
+  std::error_code ec;
+  std::filesystem::remove(path.Get(), ec); // ec deliberately ignored, matches this file's other filesystem calls
+
+  SendPresetList(); // refresh the UI's dropdown so the deleted preset disappears immediately
+}
+
+#ifdef APP_API
+// user request: "今後、すべてのパラメータの設定を次に開いたときに覚えているように"
+// (remember every param's settings the next time the app is opened) - a CLAP
+// instance's state is already persisted through the host's own project save/reload
+// (SerializeState/UnserializeState, already correct and shared - see the Preset
+// save/load section elsewhere in this file/progress.md), so this file-based
+// mechanism is Standalone-only, mirroring the existing manual Save/Load Preset
+// feature (IPlugAPP_dialog.cpp) but automatic and using one fixed path instead of a
+// user-chosen file. Lives in the same AppData\Local\FirstSynth folder settings.ini
+// already uses (INIPath(), from IPlugPaths.h), so no separate folder-creation step
+// is needed - that folder already exists by the time this synth has ever been run
+// once (the framework's own settings.ini write already created it).
+void FirstSynth::GetAutoStatePath(WDL_String& path)
+{
+  INIPath(path, "FirstSynth");
+  path.Append("\\autosave.state");
+}
+
+// called from OnWebContentLoaded() (below), same timing as the existing
+// computer-keyboard-input feature - i.e. only once the WebView has actually
+// finished loading and is ready to receive EvaluateJavaScript calls. Restoring
+// earlier (e.g. directly from the constructor, before any WebView/editor exists at
+// all) was considered and rejected: OnRestoreState()'s push would have nothing to
+// call EvaluateJavaScript on yet at that point.
+void FirstSynth::LoadAutoState()
+{
+  WDL_String path;
+  GetAutoStatePath(path);
+
+  FILE* fp = fopen(path.Get(), "rb");
+  if (!fp)
+    return;
+
+  fseek(fp, 0, SEEK_END);
+  long fileSize = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
+
+  if (fileSize > 0)
+  {
+    std::vector<uint8_t> buf((size_t) fileSize);
+    fread(buf.data(), 1, buf.size(), fp);
+
+    IByteChunk chunk;
+    chunk.PutBytes(buf.data(), (int) buf.size());
+    UnserializeState(chunk, 0);
+  }
+
+  fclose(fp);
+}
+
+void FirstSynth::SaveAutoState()
+{
+  WDL_String path;
+  GetAutoStatePath(path);
+
+  IByteChunk chunk;
+  if (SerializeState(chunk))
+  {
+    FILE* fp = fopen(path.Get(), "wb");
+    if (fp)
+    {
+      fwrite(chunk.GetData(), 1, (size_t) chunk.Size(), fp);
+      fclose(fp);
+    }
+  }
+}
+#endif
+
+void FirstSynth::OnIdle()
+{
+  if (mLooperStateDirty.exchange(false, std::memory_order_relaxed))
+  {
+    uint8_t stateByte = (uint8_t) mLooper.GetState();
+    SendArbitraryMsgFromDelegate(kMsgTagLooperState, 1, &stateByte);
+  }
+
+  if (mLooperWaveformDirty.exchange(false, std::memory_order_relaxed))
+  {
+    float peaks[LooperEffect<sample>::kWaveformBuckets];
+    mLooper.GetWaveformPeaks(peaks);
+    SendArbitraryMsgFromDelegate(kMsgTagLooperWaveform, sizeof(peaks), peaks);
+  }
+
+  // A queued cut can only land on the audio thread (see FirstSynth_Looper.h's
+  // Process()/ApplyPendingCut()), so - same idiom as the two blocks above - it just
+  // sets a flag there and this drains it on the main thread. Tell the UI the pending
+  // cut is gone (stop the blink) and push a fresh waveform, since the loop's content/
+  // length just changed.
+  if (mLooper.ConsumeCutJustApplied())
+  {
+    uint8_t cutPendingBuf[5] = {0, 0, 0, 0, 0}; // 0 = no pending cut
+    SendArbitraryMsgFromDelegate(kMsgTagLooperCutPending, sizeof(cutPendingBuf), cutPendingBuf);
+
+    // a cut just landed, so a fresh undo snapshot exists (see
+    // FirstSynth_Looper.h's ApplyPendingCut()/SaveUndoSnapshot()) - tell the UI
+    // the Undo button is now usable.
+    uint8_t undoAvailByte = 1;
+    SendArbitraryMsgFromDelegate(kMsgTagLooperUndoAvailable, 1, &undoAvailByte);
+
+    // the cut shifted/truncated the buffer, invalidating GetWaveformPeaks()'s
+    // incremental scan cache (built for the pre-cut layout) - discard it so the
+    // call below rescans the post-cut content from scratch, from the main thread
+    // (see ResetWaveformScan()'s own comment for why this can't happen inside
+    // ApplyPendingCut() itself, on the audio thread).
+    mLooper.ResetWaveformScan();
+
+    float peaks[LooperEffect<sample>::kWaveformBuckets];
+    mLooper.GetWaveformPeaks(peaks);
+    SendArbitraryMsgFromDelegate(kMsgTagLooperWaveform, sizeof(peaks), peaks);
+  }
+
+  // Same idiom again: RequestUndo() (message thread) just sets a flag,
+  // PerformUndo() (audio thread, see Process()) does the actual restore, and this
+  // drains the "it happened" notification on the main thread - tell the UI the
+  // Undo button is used up (one-level undo, see PerformUndo()'s comment), clear
+  // any pending-cut blink (PerformUndo() also cancels a still-queued cut, so it
+  // can't immediately re-cut the just-restored audio), and refresh the waveform
+  // to show the restored content.
+  if (mLooper.ConsumeUndoJustApplied())
+  {
+    uint8_t cutPendingBuf[5] = {0, 0, 0, 0, 0};
+    SendArbitraryMsgFromDelegate(kMsgTagLooperCutPending, sizeof(cutPendingBuf), cutPendingBuf);
+
+    uint8_t undoAvailByte = 0;
+    SendArbitraryMsgFromDelegate(kMsgTagLooperUndoAvailable, 1, &undoAvailByte);
+
+    mLooper.ResetWaveformScan();
+    float peaks[LooperEffect<sample>::kWaveformBuckets];
+    mLooper.GetWaveformPeaks(peaks);
+    SendArbitraryMsgFromDelegate(kMsgTagLooperWaveform, sizeof(peaks), peaks);
+  }
+
+  // While actively Recording or Overdubbing, buffer content is changing every
+  // sample - push the waveform every tick here too (not just on transport press/
+  // cut-apply/auto-stop), so it visibly keeps pace with what's actually being
+  // recorded/overdubbed instead of sitting frozen on stale content. Bounded cost:
+  // Recording auto-stops at the 40s cap, and Overdubbing's loop length is fixed
+  // once established (GetWaveformPeaks() forces a full-but-bounded rescan for that
+  // state specifically - see its own comment) - neither is an unconditional-forever
+  // cost like the meter/progress pushes above.
+  ELooperState looperState = mLooper.GetState();
+  if (looperState == ELooperState::kRecording || looperState == ELooperState::kOverdubbing)
+  {
+    float peaks[LooperEffect<sample>::kWaveformBuckets];
+    mLooper.GetWaveformPeaks(peaks);
+    SendArbitraryMsgFromDelegate(kMsgTagLooperWaveform, sizeof(peaks), peaks);
+  }
+
+  // pushes CC7-driven Gain changes to the WebView UI - see ProcessMidiMsg's own
+  // comment for why this can't happen directly from there (audio thread, and
+  // SendParameterValueFromDelegate must run on the main thread).
+  if (mGainUIDirty.exchange(false, std::memory_order_relaxed))
+  {
+    SendParameterValueFromDelegate(kParamGain, GetParam(kParamGain)->GetNormalized(), true);
+  }
+
+  // Push this tick's peak to the UI meter and reset for the next tick - sent
+  // unconditionally every IDLE_TIMER_RATE (50ms), same as a real hardware meter's
+  // continuous readout rather than only-on-change.
+  float peak = (float) mMeterPeak.exchange(0., std::memory_order_relaxed);
+  SendArbitraryMsgFromDelegate(kMsgTagMeterLevel, sizeof(float), &peak);
+
+  // Looper recording/playback gauge - also pushed unconditionally every tick, same
+  // reasoning as the meter above (a continuous readout, not just on state change).
+  float looperProgress[2] = { (float) mLooper.GetBarFraction(), (float) mLooper.GetCursorFraction() };
+  SendArbitraryMsgFromDelegate(kMsgTagLooperProgress, sizeof(looperProgress), looperProgress);
+
+#ifdef APP_API
+  // batched, at most once per idle tick (50ms) rather than once per param change -
+  // see mAutoStateDirty's own comment in OnParamChange
+  if (mAutoStateDirty.exchange(false, std::memory_order_relaxed))
+    SaveAutoState();
+#endif
+}
+
+void FirstSynth::ProcessMidiMsg(const IMidiMsg& msg)
+{
+  TRACE;
+
+  int status = msg.StatusMsg();
+
+  switch (status)
+  {
+    case IMidiMsg::kNoteOn:
+    case IMidiMsg::kNoteOff:
+    case IMidiMsg::kPolyAftertouch:
+    case IMidiMsg::kControlChange:
+    case IMidiMsg::kProgramChange:
+    case IMidiMsg::kChannelAftertouch:
+    case IMidiMsg::kPitchWheel:
+    {
+      goto handle;
+    }
+    default:
+      return;
+  }
+
+handle:
+  // MIDI CC7 (Channel Volume) now drives the Gain param directly, rather than a
+  // separate hidden multiplier (mCCVolume, removed) applied after it - user found
+  // having two overlapping "volume" controls (one invisible) confusing, and wanted
+  // a MIDI keyboard's physical volume slider to move the same visible Gain knob
+  // instead. ControlChange() already returns [0,1], which for Gain (a plain linear
+  // 0-100% param, no curve) is exactly its own normalized value - no conversion
+  // needed.
+  if (status == IMidiMsg::kControlChange && msg.ControlChangeIdx() == IMidiMsg::kChannelVolume)
+  {
+    // SetParameterValue() updates the param's real value (audibly correct
+    // immediately) and calls the DSP-side OnParamChange(int) - but for the
+    // Standalone app, InformHostOfParamChange() is a no-op (no host to inform,
+    // IPlugAPP.h) and OnParamChange(idx, kUI)'s default path never reaches the
+    // WebView UI push (that needs SendParameterValueFromDelegate specifically,
+    // which touches WebView2's COM object and must run on the main thread - this
+    // handler runs on the audio thread) - so the Gain *param* was already correct
+    // but the on-screen knob never moved. mGainUIDirty + OnIdle() below does that
+    // push safely, same reasoning/pattern as mLooperStateDirty.
+    SetParameterValue(kParamGain, msg.ControlChange(IMidiMsg::kChannelVolume));
+    mGainUIDirty.store(true, std::memory_order_relaxed);
+  }
+
+  mDSP.ProcessMidiMsg(msg);
+  SendMidiMsg(msg);
+}
+#endif
+
+bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData)
+{
+  if (msgTag == kMsgTagSetUIScale)
+  {
+    const int scalePercent = ctrlTag;
+    const int newW = static_cast<int>(std::round(PLUG_WIDTH * scalePercent / 100.0));
+    const int newH = static_cast<int>(std::round(PLUG_HEIGHT * scalePercent / 100.0));
+    Resize(newW, newH);
+    return true;
+  }
+
+#if IPLUG_DSP
+  if (msgTag == kMsgTagLooperTransport || msgTag == kMsgTagLooperStop || msgTag == kMsgTagLooperClear)
+  {
+    ELooperState newState;
+    if (msgTag == kMsgTagLooperTransport)    newState = mLooper.CycleTransport();
+    else if (msgTag == kMsgTagLooperStop)    newState = mLooper.Stop();
+    else /* kMsgTagLooperClear */            newState = mLooper.Clear();
+
+    uint8_t stateByte = (uint8_t) newState;
+    SendArbitraryMsgFromDelegate(kMsgTagLooperState, 1, &stateByte);
+
+    // Refresh the waveform display on every transport/stop/clear press, not just
+    // the moment a recording finishes - Overdub actively rewrites buffer content
+    // as it plays, and Clear needs to blank the display back out (GetWaveformPeaks
+    // correctly returns all-zero once mLoopLengthSamples is reset to 0).
+    float peaks[LooperEffect<sample>::kWaveformBuckets];
+    mLooper.GetWaveformPeaks(peaks);
+    SendArbitraryMsgFromDelegate(kMsgTagLooperWaveform, sizeof(peaks), peaks);
+
+    // Stop/Clear both cancel any pending cut internally (see their own comments in
+    // FirstSynth_Looper.h) - tell the UI so the blink overlay clears immediately,
+    // rather than waiting for a wrap that Stopped will never reach, or that no
+    // longer means anything once Clear wiped the loop.
+    if (msgTag == kMsgTagLooperStop || msgTag == kMsgTagLooperClear)
+    {
+      uint8_t cutPendingBuf[5] = {0, 0, 0, 0, 0};
+      SendArbitraryMsgFromDelegate(kMsgTagLooperCutPending, sizeof(cutPendingBuf), cutPendingBuf);
+    }
+
+    // Clear() also wipes the undo snapshot (see its own comment) - Stop doesn't.
+    if (msgTag == kMsgTagLooperClear)
+    {
+      uint8_t undoAvailByte = 0;
+      SendArbitraryMsgFromDelegate(kMsgTagLooperUndoAvailable, 1, &undoAvailByte);
+    }
+
+    return true;
+  }
+
+  if (msgTag == kMsgTagLooperCut && dataSize >= 5)
+  {
+    const uint8_t* bytes = (const uint8_t*) pData;
+    bool isLeft = bytes[0] != 0;
+    float posFrac;
+    memcpy(&posFrac, bytes + 1, 4);
+
+    if (mLooper.QueueCut(isLeft, (double) posFrac))
+    {
+      uint8_t cutPendingBuf[5];
+      cutPendingBuf[0] = isLeft ? 1 : 2;
+      float sendFrac = (float) mLooper.GetPendingCutFraction();
+      memcpy(cutPendingBuf + 1, &sendFrac, 4);
+      SendArbitraryMsgFromDelegate(kMsgTagLooperCutPending, sizeof(cutPendingBuf), cutPendingBuf);
+    }
+    return true;
+  }
+
+  if (msgTag == kMsgTagLooperUndoCut)
+  {
+    // just requests it - the actual restore happens on the audio thread and is
+    // reported back via ConsumeUndoJustApplied() in OnIdle() (see its comment),
+    // same async pattern as kMsgTagLooperCut/QueueCut() above.
+    mLooper.RequestUndo();
+    return true;
+  }
+
+  // Cross-format preset browser - not gated on APP_API, see kMsgTagPresetList's
+  // comment in FirstSynth.h. pData is the raw UTF8 preset name (not
+  // null-terminated by the sender), so it's copied into a std::string first to get
+  // a real null-terminated buffer for SavePresetAs()/LoadPresetByName().
+  if (msgTag == kMsgTagPresetSave && dataSize > 0)
+  {
+    std::string name((const char*) pData, (size_t) dataSize);
+    SavePresetAs(name.c_str());
+    return true;
+  }
+
+  if (msgTag == kMsgTagPresetLoad && dataSize > 0)
+  {
+    std::string name((const char*) pData, (size_t) dataSize);
+    LoadPresetByName(name.c_str());
+    return true;
+  }
+
+  if (msgTag == kMsgTagPresetDelete && dataSize > 0)
+  {
+    std::string name((const char*) pData, (size_t) dataSize);
+    DeletePresetByName(name.c_str());
+    return true;
+  }
+
+#ifdef APP_API
+  if (msgTag == kMsgTagSetStandaloneTempo && dataSize >= 4)
+  {
+    float bpm;
+    memcpy(&bpm, pData, 4);
+    if (bpm > 0.f) // guard against a stray 0/negative value turning tempo-synced LFOs silent-freq (see LFO::ProcessBlock's own 0.0 guard)
+      mStandaloneTempo.store((double) bpm, std::memory_order_relaxed);
+    return true;
+  }
+#endif
+#endif
+
+  return false;
+}
+
+void FirstSynth::OnParamChange(int paramIdx)
+{
+#if IPLUG_DSP
+  double value = GetParam(paramIdx)->Value();
+
+#ifdef APP_API
+  // gated on mAutoStateLoaded (see its own comment in FirstSynth.h) - ignores the
+  // framework's own pre-editor OnParamReset(kReset) startup pass (default values,
+  // fires before LoadAutoState() ever runs) so it can't clobber the real saved file
+  // before it's been read. Once genuinely loaded, any param (drag, host automation,
+  // even the restore itself, or the manual Load Preset path) marks state dirty;
+  // OnIdle() below does the actual write, batched to once per idle tick rather than
+  // once per param-change (which could be many times a second while dragging).
+  if (mAutoStateLoaded.load(std::memory_order_relaxed))
+    mAutoStateDirty.store(true, std::memory_order_relaxed);
+#endif
+
+  switch (paramIdx)
+  {
+    case kParamChorusRate:     mChorus.SetRateHz((sample) value); break;
+    case kParamChorusDepth:    mChorus.SetDepth((sample) value / 100.); break;
+    case kParamChorusMix:      mChorus.SetMix((sample) value / 100.); break;
+    case kParamDelayTime:      mDelay.SetTimeMs((sample) value); break;
+    case kParamDelayFeedback:  mDelay.SetFeedback((sample) value / 100.); break;
+    case kParamDelayMix:       mDelay.SetMix((sample) value / 100.); break;
+    case kParamDelayPingPong:  mDelay.SetPingPong(value > 0.5); break;
+    case kParamReverbDecay:    mReverb.SetDecay((sample) value / 100.); break;
+    case kParamReverbDamping:  mReverb.SetDamping((sample) value / 100.); break;
+    case kParamReverbMix:      mReverb.SetMix((sample) value / 100.); break;
+    case kParamLooperReverse:  mLooper.SetReverse(value > 0.5); break;
+    case kParamLooperFeedback: mLooper.SetFeedback((sample) value / 100.); break;
+    case kParamLooperMix:      mLooper.SetMix((sample) value / 100.); break;
+    case kParamBassBoost:      mBassBoost.SetAmount((sample) value / 100.); break;
+    case kParamEQLowFreq:      mEQ.SetFreq(0, (sample) value); break;
+    case kParamEQLowGain:      mEQ.SetGainDb(0, (sample) value); break;
+    case kParamEQBand2Freq:    mEQ.SetFreq(1, (sample) value); break;
+    case kParamEQBand2Gain:    mEQ.SetGainDb(1, (sample) value); break;
+    case kParamEQBand2Q:       mEQ.SetQ(1, (sample) value); break;
+    case kParamEQBand3Freq:    mEQ.SetFreq(2, (sample) value); break;
+    case kParamEQBand3Gain:    mEQ.SetGainDb(2, (sample) value); break;
+    case kParamEQBand3Q:       mEQ.SetQ(2, (sample) value); break;
+    case kParamEQBand4Freq:    mEQ.SetFreq(3, (sample) value); break;
+    case kParamEQBand4Gain:    mEQ.SetGainDb(3, (sample) value); break;
+    case kParamEQBand4Q:       mEQ.SetQ(3, (sample) value); break;
+    case kParamEQHighFreq:     mEQ.SetFreq(4, (sample) value); break;
+    case kParamEQHighGain:     mEQ.SetGainDb(4, (sample) value); break;
+    default:                   mDSP.SetParam(paramIdx, value); break;
+  }
+#endif
+}
+
+#ifdef WEBVIEW_EDITOR_DELEGATE
+bool FirstSynth::CanNavigateToURL(const char* url)
+{
+  DBGMSG("Navigating to URL %s\n", url);
+
+  return true;
+}
+
+bool FirstSynth::OnCanDownloadMIMEType(const char* mimeType)
+{
+  return std::string_view(mimeType) != "text/html";
+}
+
+void FirstSynth::OnDownloadedFile(const char* path)
+{
+  WDL_String str;
+  str.SetFormatted(64, "Downloaded file to %s\n", path);
+  LoadHTML(str.Get());
+}
+
+void FirstSynth::OnFailedToDownloadFile(const char* path)
+{
+  WDL_String str;
+  str.SetFormatted(64, "Faild to download file to %s\n", path);
+  LoadHTML(str.Get());
+}
+
+void FirstSynth::OnGetLocalDownloadPathForFile(const char* fileName, WDL_String& localPath)
+{
+  DesktopPath(localPath);
+  localPath.AppendFormatted(MAX_WIN32_PATH_LEN, "/%s", fileName);
+}
+
+void FirstSynth::OnWebContentLoaded()
+{
+  // must call the base implementation - it sends the "params" JSON describing every
+  // parameter to the UI and triggers OnUIOpen() (which syncs current values); without
+  // this, overriding the method here would silently break the entire UI sync
+  EDITOR_DELEGATE_CLASS::OnWebContentLoaded();
+
+  // shows the build version in the page header (index.html's #versionLabel) so it's
+  // visible without opening an installer/about box - PLUG_VERSION_STR (config.h)
+  // stays the single source of truth, this just displays whatever that's set to.
+  // Not gated on APP_API - relevant when hosted as CLAP too, unlike the
+  // keyboard-input feature right below.
+  EvaluateJavaScript("if (typeof SetVersionLabel === 'function') { SetVersionLabel('" PLUG_VERSION_STR "'); }");
+
+  // cross-format preset browser (index.html) - not gated on APP_API, works the same
+  // in every build, see kMsgTagPresetList's comment in FirstSynth.h
+  SendPresetList();
+
+  // the computer-keyboard-as-MIDI-keyboard feature (index.html) is a dev convenience
+  // for the standalone app only - a CLAP instance embedded in a host must not hijack
+  // keys like A-L that the host itself may use for shortcuts
+#ifdef APP_API
+  EvaluateJavaScript("if (typeof EnableComputerKeyboardInput === 'function') { EnableComputerKeyboardInput(); }");
+
+  // the manual Tempo control (index.html) only makes sense in Standalone - a CLAP/
+  // VST/etc. instance already gets a real tempo from its host, see ProcessBlock()'s
+  // own comment on mStandaloneTempo above.
+  EvaluateJavaScript("if (typeof EnableStandaloneTempoControl === 'function') { EnableStandaloneTempoControl(); }");
+
+  // "remember every param across launches" (user request) - restore right here,
+  // now that the WebView has actually finished loading (EDITOR_DELEGATE_CLASS's call
+  // above already sent one round of param values reflecting the compiled-in defaults;
+  // this overwrites the UI with the real restored ones a moment later, exact same
+  // UnserializeState()+OnRestoreState() combo as the manual Load Preset menu command
+  // already uses successfully - see LoadAutoState()'s own comment for why this timing
+  // was chosen over restoring earlier, directly in the constructor).
+  LoadAutoState();
+  OnRestoreState();
+  // only from this point on does a param change get treated as "real" and worth
+  // saving - see mAutoStateLoaded's own comment in FirstSynth.h for the startup race
+  // this prevents.
+  mAutoStateLoaded.store(true, std::memory_order_relaxed);
+#endif
+}
+#endif

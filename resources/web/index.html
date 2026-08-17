@@ -1,0 +1,3362 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style type="text/css">
+    :root {
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-subtle: #eef1f5;
+      --text: #18202d;
+      --muted-text: #5d6675;
+      --border: #c9ced6;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      /* knob dial colors - separate from the general theme vars above so
+         knob-control.js's SVG (fill/stroke) can reference them directly; see that
+         file's constructor for how they're consumed */
+      --knob-circle-fill: #18202d;
+      --knob-circle-stroke: #eef1f5;
+      --knob-track-bg: #c9ced6;
+      --knob-pointer: #2563eb;
+      --knob-value-arc: #2563eb;
+      --knob-size: 42px;
+      --knob-label-gap: 3px;
+      --knob-value-gap: 3px;
+    }
+
+    /* Dark mode - toggled via ApplyDarkMode()/ToggleDarkMode() (inline script below),
+       persisted in localStorage, applied by setting data-theme on <html>. Accent blue
+       and the knob's pointer/value-arc colors are deliberately left the same across
+       themes (a single brand hue reads fine on both light and dark backgrounds) -
+       only the base surface/text/border palette and the knob's own fill/stroke change. */
+    :root[data-theme="dark"] {
+      --bg: #14181f;
+      --surface: #1e242e;
+      --surface-subtle: #262d38;
+      --text: #e6e9ee;
+      --muted-text: #98a2b3;
+      --border: #3a4351;
+      --knob-circle-fill: #0b0d11;
+      --knob-circle-stroke: #3a4351;
+      --knob-track-bg: #3a4351;
+      --accent-soft: #1e3a5f;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    /* Faint dragon line-art watermark behind everything - tinted with the current
+       theme's text color via CSS mask (rather than baking a fixed stroke color into
+       the SVG) so it reads correctly in both light and dark mode automatically.
+       mask-mode is forced to alpha since the SVG has no fills, only strokes. */
+    #dragon-watermark {
+      position: fixed;
+      inset: 0;
+      /* negative, not 0 - a positioned element with z-index >= 0 paints ABOVE
+         static in-flow content in the same stacking context (CSS2.1 Appendix E);
+         only negative z-index paints behind it. */
+      z-index: -1;
+      pointer-events: none;
+      background-color: var(--text);
+      /* disabled for now (2026-07-26) - dragon-bg.svg didn't read as a dragon, user
+         may swap in a different illustration later. Mechanism (mask/positioning)
+         left in place - just drop in a new dragon-bg.svg and raise this back to
+         ~0.06 when ready. */
+      opacity: 0;
+      mask-image: url('dragon-bg.svg');
+      -webkit-mask-image: url('dragon-bg.svg');
+      mask-mode: alpha;
+      -webkit-mask-mode: alpha;
+      mask-size: contain;
+      -webkit-mask-size: contain;
+      mask-repeat: no-repeat;
+      -webkit-mask-repeat: no-repeat;
+      mask-position: center;
+      -webkit-mask-position: center;
+    }
+
+    /* the actual scrolling box - kept off body/html on purpose: when overflow is set
+       directly on body, the spec has the UA propagate it to the viewport instead, so
+       document.body.scrollLeft/scrollTop silently do nothing and only
+       document.scrollingElement (html) responds - using our own div here keeps
+       scrolling behavior direct and predictable */
+    #scroll-container {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+    }
+
+    /* padding lives on <main> (the element the UI-zoom `zoom` CSS property is applied
+       to, see ApplyUIScale()), not on #scroll-container - #scroll-container itself is
+       never zoomed, so padding placed there stays a fixed pixel amount regardless of
+       zoom level. At low zoom that fixed padding ate a growing share of the shrunk
+       window, squeezing knob-rows into wrapping and overflowing vertically. Padding
+       on <main> scales down together with everything else inside it. */
+    main {
+      display: block;
+      box-sizing: border-box;
+      padding: 10px 4px 16px 60px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      /* .page-header is a flex row with several other items competing for space
+         (Zoom, Dark mode, the Tempo/Level group, etc.) - a flex item can shrink
+         below its own content's natural width by default, which was wrapping the
+         title onto two lines once the row got tight (2026-07-28 bug report:
+         "「1st synth」が改行されて表示しています"). The title should never wrap. */
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 16px;
+    }
+
+    /* sits right after <h1>, pulled left out of .page-header's uniform 20px gap so
+       it reads as attached to the title rather than a separate header item */
+    .version-label {
+      margin-left: -12px;
+      color: var(--muted-text);
+      font-size: 12px;
+    }
+
+    .effects-row {
+      display: flex;
+      gap: 32px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+
+    .page-nav-btn {
+      display: inline-block;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .page-nav-btn:hover {
+      background-color: var(--surface-subtle);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* cross-format preset browser - own row below .page-header, see this element's
+       own HTML comment for why it isn't folded into that row instead. */
+    .preset-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .preset-nav-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .preset-nav-btn:hover {
+      background-color: var(--surface-subtle);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .preset-select {
+      min-width: 220px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    /* Modulation Matrix page - one row per slot: Source select -> Dest select ->
+       Amount knob. */
+    /* 8 slots split into 2 columns of 4 (2026-07-28 user request - was one long
+       vertical list of 8, felt too tall once slots 5-8 were added). .panel-matrix
+       itself stays a column (heading on top, then the row of slot-columns below);
+       .matrix-columns is the actual side-by-side row. */
+    .panel-matrix {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .matrix-columns {
+      display: flex;
+      /* ~one knob-container's width (knob-control's own 80px + its container's
+         padding), per user request - was 24px, felt too tight */
+      gap: 96px;
+    }
+
+    .matrix-slots-col {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .matrix-slot {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .matrix-slot-label {
+      width: 18px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted-text);
+      text-align: center;
+    }
+
+    .matrix-arrow {
+      color: var(--muted-text);
+      font-size: 16px;
+    }
+
+    .matrix-select {
+      min-width: 160px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .page-tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .page-tab-btn.active {
+      background-color: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .panic-btn {
+      margin-left: 40px;
+    }
+
+    .panic-btn:hover {
+      background-color: #fee2e2;
+      border-color: #dc2626;
+      color: #dc2626;
+    }
+
+    .zoom-label {
+      margin-left: 40px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted-text);
+    }
+
+    .zoom-select {
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .panel-looper-transport {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .looper-transport-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    /* single ENSO-style cycling button - color/label reflect the current state pushed
+       from C++ (LooperEffect::mState), not a locally-decided UI state - see
+       UpdateLooperButton() in the inline script */
+    .looper-transport-btn {
+      padding: 16px 32px;
+      font-size: 18px;
+      font-weight: 700;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      color: white;
+      /* fixed width, not min-width - min-width only sets a floor, so the widest
+         label ("Overdubbing", measured at 176px vs the others' 160px) still grew
+         past it, which is exactly the "エリアの大きさが変わらないように" complaint.
+         180px covers the widest label (176px) with a small margin. text-align
+         keeps shorter labels centered in the fixed box rather than hugging the
+         left edge. */
+      width: 180px;
+      text-align: center;
+    }
+
+    .looper-transport-btn.looper-empty      { background-color: var(--muted-text); }
+    .looper-transport-btn.looper-recording  { background-color: #dc2626; }
+    .looper-transport-btn.looper-playing    { background-color: #16a34a; }
+    .looper-transport-btn.looper-overdubbing{ background-color: #ea580c; }
+    .looper-transport-btn.looper-stopped    { background-color: var(--muted-text); }
+
+    .looper-stop-btn {
+      padding: 12px 24px;
+    }
+
+    .looper-clear-btn {
+      padding: 12px 24px;
+    }
+
+    .looper-clear-btn:hover {
+      background-color: #fee2e2;
+      border-color: #dc2626;
+      color: #dc2626;
+    }
+
+    /* Looper recording/playback gauge (private/todo.txt: "録音中に横向きにゲージと
+       カーソルが伸びていって..."). The track's right edge always represents the full
+       40s recording cap, not the actual recorded loop length - see
+       LooperEffect::GetBarFraction()/GetCursorFraction()'s comment for why: a loop
+       shorter than 40s just visibly occupies less than the full width, rather than
+       the gauge rescaling to fit it. */
+    .panel-looper-gauge {
+      margin-top: 48px;
+      /* no explicit width - a block element's default width:auto naturally fills
+         the available space minus its margins, unlike width:100% (tried first),
+         which forces the box to fill 100% regardless of margin-right, causing
+         the margin to have no visible effect. <main>'s own padding is asymmetric
+         (60px left, 4px right - see main's own CSS comment), so without this the
+         gauge's right edge sat almost flush with the window while its left edge
+         had a large gap. Adding the difference (60-4=56px) here as a right
+         margin makes both sides match.
+         This 56px is only the initial/fallback value, shown briefly before JS
+         runs - AlignMeterToContentEdge() (see that function's own comment,
+         2026-07-29 addition) overrides it live with 56px + however much wider
+         the window is than the page's actual content, so the gauge stops at the
+         same content edge as everything else instead of stretching to fill an
+         arbitrarily wide DAW-hosted panel. */
+      margin-right: 56px;
+      /* containing block for .looper-gauge-cut-pending, and the click target for
+         OnGaugeAreaClick() - clicking anywhere in this box (track or waveform,
+         since both are width:100% children of it) maps directly to a 0..1
+         fraction of the gauge's own coordinate system, no separate scale needed. */
+      position: relative;
+    }
+
+    .panel-looper-gauge.cut-tool-active {
+      cursor: crosshair;
+    }
+
+    .looper-cut-tools {
+      display: inline-flex;
+      gap: 6px;
+      /* same gap style used for other "separate group of controls" spacing in this
+         project (e.g. the Master panel's Bass Boost -> Yuragi gap) */
+      margin-left: 24px;
+    }
+
+    .looper-cut-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 54px;
+      height: 42px;
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted-text);
+      cursor: pointer;
+    }
+
+    .looper-cut-btn:hover {
+      color: var(--text);
+    }
+
+    /* the Cancel button (left of the two scissors) is only meaningful while a cut
+       is actually pending - grayed out and inert the rest of the time so it doesn't
+       read as a live no-op */
+    .looper-cut-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    .looper-cut-btn:disabled:hover {
+      color: var(--muted-text);
+    }
+
+    /* selected tool - same active-state language as .test-note.active elsewhere */
+    .looper-cut-btn.active {
+      background-color: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    /* the region that will be removed once a queued cut lands (see QueueCut()'s
+       "applies at the next loop-wrap" comment in FirstSynth_Looper.h) - blinks so
+       it reads as "pending", not as an already-applied edit. Spans from the gauge
+       track's own top edge down to the waveform's bottom edge (.panel-looper-gauge's
+       own bottom, since the waveform is its last child) - top:26px matches
+       .looper-gauge-track's margin-top exactly, so it starts flush with the track. */
+    .looper-gauge-cut-pending {
+      position: absolute;
+      top: 26px;
+      bottom: 0;
+      background-color: #dc2626;
+      border-radius: 8px;
+      pointer-events: none;
+      display: none;
+      animation: cut-pending-blink 0.6s ease-in-out infinite;
+    }
+
+    /* follows the mouse across the gauge/waveform while a cut tool is selected, so
+       the exact position a click would cut at is visible before committing to it -
+       same vertical span as .looper-gauge-cut-pending, shifted left by half its own
+       width so it's centered on the cursor rather than starting there. */
+    .looper-gauge-cut-hover-line {
+      position: absolute;
+      top: 26px;
+      bottom: 0;
+      width: 2px;
+      margin-left: -1px;
+      background-color: var(--accent);
+      pointer-events: none;
+      display: none;
+    }
+
+    /* steady (non-blinking) shaded preview of the side that would be removed if the
+       user clicked at the current hover position - same red as .looper-gauge-cut-pending
+       (that color already means "will be cut" in this codebase) but dimmer and without
+       the blink animation, since this is only a preview, not a confirmed queued cut.
+       left/width are set by JS using the same left-vs-right math as
+       UpdateCutPendingOverlay() (SetCutRegionStyle()), just driven by the live cursor
+       fraction instead of the queued cut's fraction. */
+    .looper-gauge-cut-hover-area {
+      position: absolute;
+      top: 26px;
+      bottom: 0;
+      background-color: #dc2626;
+      opacity: 0.18;
+      border-radius: 8px;
+      pointer-events: none;
+      display: none;
+    }
+
+    @keyframes cut-pending-blink {
+      0%, 100% { opacity: 0.15; }
+      50%      { opacity: 0.55; }
+    }
+
+    .looper-gauge-track {
+      position: relative;
+      /* extra top margin/space for the walker to stand visibly above the bar,
+         rather than being clipped at the track's own edge or overlapping its
+         colored fill */
+      margin-top: 26px;
+      width: 100%;
+      height: 36px;
+      background-color: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      /* no overflow:hidden here - the walker cursor (a sibling of
+         .looper-gauge-fill-clip below, not a child of it) needs to render above
+         this box without being clipped by it */
+    }
+
+    /* clips just the color fill to the track's rounded corners - kept separate from
+       .looper-gauge-track itself so that box's overflow can stay visible (see above) */
+    .looper-gauge-fill-clip {
+      position: absolute;
+      inset: 0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .looper-gauge-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      transition: width 80ms linear;
+    }
+
+    /* same colors as .looper-transport-btn's state colors above, reused here for
+       the same at-a-glance meaning (red=recording, green=playing, orange=overdub) */
+    .looper-gauge-fill.looper-recording   { background-color: #dc2626; }
+    .looper-gauge-fill.looper-playing     { background-color: #16a34a; }
+    .looper-gauge-fill.looper-overdubbing { background-color: #ea580c; }
+    /* Stopped keeps the bar/cursor frozen in place (buffer content is still there,
+       just not advancing) rather than hiding them - a neutral gray distinguishes it
+       from the active red/green/orange states. */
+    .looper-gauge-fill.looper-stopped     { background-color: var(--muted-text); }
+
+    .looper-gauge-cursor {
+      position: absolute;
+      /* anchored to the track's top edge, then pulled up by its own height (minus a
+         couple px of clearance) so the walker's feet rest just above the bar's
+         surface instead of being centered through the middle of it */
+      top: 0;
+      transform: translate(-50%, calc(-100% - 2px));
+      transition: left 80ms linear;
+      color: var(--text);
+      pointer-events: none;
+    }
+
+    /* a small walking-person animation (user: "カーソルは出来れば小さな人が歩いて
+       いくアニメーション") - a subtle bob+tilt per step, cheap enough as a pure CSS
+       keyframe loop rather than needing a real sprite. Reverse gets its own mirrored
+       keyframe set (see .reverse below) instead of a static scaleX(-1) on top of the
+       same element, since that would fight with the animation for the transform
+       property - two keyframe sets swapped by class is simpler than combining both
+       into one animation with a variable. */
+    @keyframes looper-walk {
+      0%, 100% { transform: translateY(0) rotate(-8deg); }
+      50%      { transform: translateY(-3px) rotate(8deg); }
+    }
+    @keyframes looper-walk-reverse {
+      0%, 100% { transform: scaleX(-1) translateY(0) rotate(-8deg); }
+      50%      { transform: scaleX(-1) translateY(-3px) rotate(8deg); }
+    }
+    /* the hand-drawn .walker SVG (see markup) is drawn facing right by design (its
+       leading/trailing leg and arm stride are deliberately asymmetric, unlike the
+       emoji originally used here, which didn't visibly mirror - see this file's
+       progress.md entry) - so forward (non-reverse) plays it unmirrored as drawn,
+       and only Reverse needs the scaleX(-1) mirror to face left. */
+    .looper-gauge-cursor .walker {
+      display: block;
+      animation: looper-walk 0.4s ease-in-out infinite;
+    }
+    .looper-gauge-cursor.reverse .walker {
+      animation-name: looper-walk-reverse;
+    }
+
+    /* rough waveform of the recorded loop, directly under the gauge bar. Plain
+       width:100% (same as .looper-gauge-track, same parent) rather than absolute
+       positioning - simplest way to guarantee its x-axis lines up with the gauge's
+       own, since both boxes then span identically. Drawn via canvas (DrawLooperWaveform()),
+       not CSS/SVG, since it's redrawn from a flat Float32Array of peaks each time. */
+    .looper-gauge-waveform {
+      display: block;
+      width: 100%;
+      /* the Looper page has a lot of empty space below the gauge (no other content
+         down there) - use most of it so it's obvious at a glance where the loop is
+         actually recorded, rather than a thin sliver easy to miss */
+      height: 240px;
+      margin-top: 12px;
+    }
+
+    /* latching toggle look for the Hold button, shares .test-note's base style */
+    .test-note.active {
+      background-color: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    h2 {
+      margin: 14px 0 6px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--muted-text);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .knob-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-content: flex-start;
+    }
+
+    /* Columns are `max-content` (self-sizing), NOT locked to fixed px - a fixed-px
+       attempt 2026-07-21 broke the layout badly because the widths were measured with
+       only a handful of params' min/max simulated (not every knob in a column), so
+       real params this measurement missed (e.g. Osc Fine's +/-100.0ct) needed more
+       room than the hardcoded number allowed - reverted same day, don't retry fixed
+       px without measuring every single knob in each column, not just the wide-range
+       ones. knob-control.js's own per-knob fixed-width value box (see progress.md
+       "Known issue #14") already solves the actual "layout shifts while dragging"
+       problem this was trying to reinforce - max-content plus that per-knob fix is
+       the safer combination. */
+    .layout-grid {
+      display: grid;
+      grid-template-columns: max-content max-content max-content 20px;
+      justify-content: start;
+      grid-template-areas:
+        "osc1       mixer      pitchlfo   spacer"
+        "osc2       bendrange  pitchlfo   spacer"
+        "filter     filterenv  filterlfo  spacer"
+        "master     ampenv     amplfo     spacer";
+      column-gap: 14px;
+      row-gap: 2px;
+    }
+
+    .panel-master     { grid-area: master; }
+    .panel-osc1       { grid-area: osc1; }
+    .panel-osc2       { grid-area: osc2; }
+    .panel-mixer      { grid-area: mixer; }
+    .panel-bendrange  { grid-area: bendrange; }
+    .panel-filter     { grid-area: filter; }
+    .panel-filterenv  { grid-area: filterenv; }
+    .panel-ampenv     { grid-area: ampenv; }
+    .panel-pitchlfo   { grid-area: pitchlfo; }
+    .panel-filterlfo  { grid-area: filterlfo; }
+    .panel-amplfo     { grid-area: amplfo; }
+    /* explicit sized element (not just padding/margin) reserving scroll room past the
+       last real column - padding alone wasn't reliably included in this WebView's
+       scrollable extent, same reason the bottom-of-page spacer div exists */
+    .panel-spacer     { grid-area: spacer; }
+
+    /* Section color-coding (private/todo.txt: "セクションで色分け") - overrides the
+       knob's pointer/value-arc color (normally a uniform --accent blue, see :root)
+       per functional group of panels, so it's visually obvious at a glance which
+       knobs belong to the oscillator/mixer/pitch-LFO signal path vs the filter path
+       vs the amp/master path. Also overrides --accent/--accent-soft in the same
+       panels, so the LFO shape-selector's "selected" highlight and the Sync toggle
+       switch (both of which reference --accent directly, not --knob-pointer) match
+       the section too, not just the knobs - user asked for this explicitly after
+       the first (knob-only) pass. Works with zero knob-control.js changes: these
+       are just CSS custom-property overrides on the panel container, and
+       knob-control's shadow-DOM SVG already reads --knob-pointer/--knob-value-arc
+       via var(...), which inherits through the shadow boundary the same way dark
+       mode's knob colors already do (see that section's own comment).
+       Oscillator/Mixer/Pitch LFO panels are left alone (they keep the default blue
+       from :root - the "first" section, no override needed).
+       --accent-soft needs its own dark-mode-specific override per section, same
+       reason the base --accent-soft already does (see the Dark mode section above)
+       - a light pastel tint that works against a light --surface looks washed-out/
+       wrong against a dark one, so each section gets a darker, desaturated variant
+       for dark mode specifically. --knob-pointer/--knob-value-arc and light-mode
+       --accent themselves are kept identical across both themes, matching the base
+       accent's own existing convention (one brand hue per section reads fine on
+       either background, no separate dark variant needed for those two). */
+    .panel-filter, .panel-filterenv, .panel-filterlfo {
+      --knob-pointer: #16a34a;
+      --knob-value-arc: #16a34a;
+      --accent: #16a34a;
+      --accent-soft: #dcfce7;
+    }
+    .panel-master, .panel-ampenv, .panel-amplfo {
+      --knob-pointer: #ea580c;
+      --knob-value-arc: #ea580c;
+      --accent: #ea580c;
+      --accent-soft: #ffedd5;
+    }
+    :root[data-theme="dark"] .panel-filter,
+    :root[data-theme="dark"] .panel-filterenv,
+    :root[data-theme="dark"] .panel-filterlfo {
+      --accent-soft: #1a3327;
+    }
+    :root[data-theme="dark"] .panel-master,
+    :root[data-theme="dark"] .panel-ampenv,
+    :root[data-theme="dark"] .panel-amplfo {
+      --accent-soft: #3a2413;
+    }
+
+    /* Wraps the Rate (Hz) / Rate (Tempo) knob pair - only one is ever active at a
+       time (toggled by Sync, see UpdateRateKnobVisibility()), but their natural
+       widths differ (Hz's plain number vs Tempo's value-label text), so swapping
+       which one shows visibly resized this slot in the knob-row - user asked for
+       it to stay a fixed size regardless of which is active.
+       A hardcoded pixel width was tried first (measured in this project's own
+       browser-harness testing environment) and looked right there, but the user
+       found it still resized (and threw off the whole LFO panel's height, via
+       knob-row wrapping) in the real native WebView2 app - a different rendering
+       engine/font metrics than the test browser can measure Hz/Tempo's text at a
+       different width than assumed, so a hardcoded guess isn't reliable (this
+       project already has one prior "don't hardcode grid widths" lesson, see
+       Known Issue #15 in progress.md, for the same underlying reason).
+       Fixed properly instead: both knob-containers occupy the *same* grid cell
+       (grid-area: 1/1), so the slot's own size is always exactly the larger of
+       the two, computed by the browser's own layout engine in whatever
+       environment it's actually running - no measurement/guessing needed. The
+       "off" one is hidden via visibility:hidden (not display:none) specifically
+       *because* visibility:hidden still participates in layout sizing while
+       display:none would remove it and defeat the whole point. */
+    .rate-knob-slot {
+      display: grid;
+    }
+    .rate-knob-slot > .knob-container {
+      grid-area: 1 / 1;
+      /* the slot is always sized to whichever of Hz/Tempo is naturally wider (see
+         comment above); when the *narrower* one is the visible one, it must be
+         centered in that extra space rather than sitting flush-left, since
+         .knob-container's own flex layout has no justify-content set. */
+      justify-content: center;
+    }
+
+    .knob-container {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 8px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background-color: var(--surface);
+    }
+
+    /* wraps the Standalone-only Tempo chip + the always-present meter chip, so the
+       group's margin-left:auto (pushing both to the header's right edge) lives on
+       something that's always in the layout - see this wrapper's own HTML comment
+       for why it can't just live on .header-tempo-container or .meter-container
+       individually. */
+    .header-right-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      margin-left: auto;
+    }
+
+    /* header chip for the Standalone-only Tempo control - same chip styling as
+       .meter-container right next to it (padding/border/radius/background), so the
+       two read as a matched pair. */
+    .header-tempo-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+    }
+
+    /* width fits 3 digits (20-300 range) without growing/shrinking as the user types -
+       same fixed-width intent as knob-control.js's own value box (see its comment). */
+    .header-tempo-input {
+      width: 30px;
+      font-size: 14px;
+      color: var(--text);
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+      font-family: inherit;
+    }
+
+    .header-tempo-input:focus {
+      outline: none;
+      border-bottom-color: var(--accent);
+    }
+
+    .test-note {
+      align-self: center;
+      margin-left: 48px;
+      display: inline-block;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .test-note:hover {
+      background-color: var(--surface-subtle);
+    }
+
+    /* Output level/clip meter (page-header, far right) - a peak-hold bar, not a
+       full VU ballistics meter, refreshed once per OnIdle tick (50ms) from the
+       audio thread's peak-since-last-tick. Right-alignment now comes from the
+       .header-right-group wrapper around this and .header-tempo-container, not from
+       a margin-left:auto of its own - see that wrapper's comment for why. */
+    .meter-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      /* same padding/border/radius/background as .page-nav-btn, so this reads as
+         a same-height chip in the header row instead of a thin strip floating
+         in the middle of it */
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface);
+    }
+
+    .meter-track {
+      position: relative;
+      width: 100px;
+      height: 14px;
+      background-color: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .meter-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: linear-gradient(to right, #22c55e, #eab308 70%, #ef4444 90%);
+    }
+
+    .meter-zero-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background-color: rgba(0, 0, 0, 0.35);
+    }
+
+    /* clip indicator - latches on (red) once the output has exceeded 0dBFS,
+       stays lit until clicked (standard DAW meter convention) */
+    .meter-clip {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background-color: var(--surface-subtle);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .meter-clip.active {
+      background-color: #ef4444;
+      border-color: #ef4444;
+      box-shadow: 0 0 4px #ef4444;
+    }
+
+    /* Sync toggle switch */
+    .toggle-container {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 8px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background-color: var(--surface);
+    }
+
+    .toggle-label {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: var(--border);
+      border-radius: 24px;
+      transition: 0.15s;
+    }
+
+    .switch .slider::before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      border-radius: 50%;
+      transition: 0.15s;
+    }
+
+    .switch input:checked + .slider {
+      background-color: var(--accent);
+    }
+
+    .switch input:checked + .slider::before {
+      transform: translateX(20px);
+    }
+
+    /* LFO shape selector */
+    .shape-selector-container {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 8px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background-color: var(--surface);
+    }
+
+    .shape-selector {
+      display: grid;
+      grid-template-columns: repeat(3, 38px);
+      grid-auto-rows: 27px;
+      gap: 3px;
+    }
+
+    .shape-btn {
+      width: 38px;
+      height: 27px;
+      padding: 2px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background-color: var(--surface-subtle);
+      cursor: pointer;
+      color: var(--muted-text);
+    }
+
+    .shape-btn svg {
+      width: 100%;
+      height: 100%;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .shape-btn.selected {
+      background-color: var(--accent-soft, #dbeafe);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Filter Type reuses .shape-btn's box/selected styling (see its own HTML
+       comment) but holds text ("LP"/"BP"/"HP"), not an svg icon - scoped here
+       rather than changing .shape-btn itself, which every LFO Shape picker
+       also uses. */
+    .filter-type-selector .shape-btn {
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Oscillator wave display */
+    .wave-display-container {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 8px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background-color: var(--surface);
+    }
+
+    /* 5-band parametric EQ (Effects page, last panel) */
+    .panel-eq eq-curve-display {
+      display: block;
+      width: 560px;
+      max-width: 100%;
+      height: 130px;
+      margin-bottom: 8px;
+    }
+
+    .eq-band-row {
+      align-items: flex-start;
+    }
+
+    .eq-band-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+  </style>
+
+  <script src="script.js"></script>
+  <script type="module" src="knob-control.js"></script>
+  <script type="module" src="waveform-display.js"></script>
+  <script type="module" src="eq-curve-display.js"></script>
+  <script>
+    // MIDI CC 123 (All Notes Off) - MidiSynth (iPlug2 framework) already maps this to
+    // an immediate note-off for every voice, no DSP-side code needed for this.
+    function Panic() {
+      SMMFUI(0xB0, 123, 0);
+    }
+
+    // Output level/clip meter - added per user request ("歪んでるかどうか知るため
+    // のメーターが必要"), so distortion (from pushing Gain, the effects, or just a
+    // loud patch) is visible rather than only audible. FirstSynth::OnIdle() pushes a
+    // 4-byte float (kMsgTagMeterLevel) once per idle tick (50ms) with the peak linear
+    // amplitude seen since the previous tick - the C++ side owns the actual metering
+    // (post-CC7-volume, post-Chorus/Delay/Reverb/Looper, i.e. the true final output),
+    // this is purely a display of what it sends.
+    const METER_MIN_DB = -40;
+    const METER_MAX_DB = 3; // some headroom past 0dB so an over is visibly past the line, not just pinned at the edge
+
+    function DbFromLinear(v) {
+      return 20 * Math.log10(Math.max(v, 1e-6));
+    }
+
+    function DbToMeterPercent(db) {
+      return Math.max(0, Math.min(100, (db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB) * 100));
+    }
+
+    let clipTimeoutId = null;
+
+    function UpdateMeter(peakLinear) {
+      const fill = document.getElementById('meterFill');
+      if (fill) fill.style.width = DbToMeterPercent(DbFromLinear(peakLinear)) + '%';
+
+      if (peakLinear > 1.0) {
+        const clip = document.getElementById('meterClip');
+        if (clip) clip.classList.add('active');
+        // auto-clears 2s after the *last* over, not the first - restarting the
+        // timer on every new over keeps the light lit continuously through a
+        // sustained clip instead of flickering off mid-stream
+        if (clipTimeoutId) clearTimeout(clipTimeoutId);
+        clipTimeoutId = setTimeout(ResetClipIndicator, 2000);
+      }
+    }
+
+    // Also clearable early by clicking the light directly, on top of the 2s auto-clear.
+    function ResetClipIndicator() {
+      const clip = document.getElementById('meterClip');
+      if (clip) clip.classList.remove('active');
+      clipTimeoutId = null;
+    }
+
+    // Aligns the meter's right edge with the LFO Depth knobs' column (the real
+    // rightmost content), not the header/window's own right edge - user asked
+    // for this after the meter first landed flush with the window edge. Can't
+    // just be a fixed CSS margin: .layout-grid's columns are max-content and
+    // don't stretch to fill a wider window (see that class's own CSS comment),
+    // and there's also an invisible 20px scroll-headroom spacer column past the
+    // real content - so the gap between the header's edge and the LFO column's
+    // edge varies with window size.
+    function AlignMeterToContentEdge() {
+      // Margin goes on `.header-right-group` itself, NOT on `.meter-container`
+      // nested inside it - found 2026-07-29 as the real root cause of a
+      // horizontal-scrollbar bug (see progress.md's "Horizontal scrollbar
+      // reappeared..." entry for the full trail). `.header-right-group` is
+      // `display: inline-flex`, so its own width auto-sizes to fit its children -
+      // INCLUDING any margin placed on those children (a flex container's
+      // content-based width counts each child's outer size, margin included).
+      // Writing marginRight onto `.meter-container` therefore inflated
+      // `.header-right-group`'s own intrinsic width by that same amount every
+      // time, and since `.header-right-group` is itself flush-right via its own
+      // `margin-left: auto` inside `.page-header`, that growth just overflowed
+      // `.page-header`/`<main>`/`#scroll-container` to the right instead of
+      // actually shifting the meter left - a scrollbar with no visible
+      // realignment, exactly what was observed. A margin on `.header-right-group`
+      // itself doesn't have this problem: margin lives outside an element's own
+      // border-box and only affects its position within ITS parent's flex row
+      // (`.page-header`), not its own intrinsic size, so `margin-left: auto`
+      // simply gives up `gap` px of the free space it would otherwise have
+      // claimed, shifting the whole group left by exactly that much.
+      const group = document.querySelector('.header-right-group');
+      const header = document.getElementById('scroll-container');
+      const target = document.querySelector('.panel-amplfo');
+      if (!group || !header || !target) return;
+
+      const targetRect = target.getBoundingClientRect();
+      // .panel-amplfo only exists on the Synth page - SetPage() hides the other
+      // pages' content via display:none, which collapses getBoundingClientRect()
+      // to all zeros. That used to feed straight into the gap math below (gap =
+      // header.right - 0 = header.right, a huge bogus margin), which is exactly
+      // why the meter visibly jumped position when switching to Effects/Looper -
+      // user asked for it to stay put across all 3 pages instead. Skipping the
+      // update entirely while the target is hidden leaves whatever margin was
+      // last computed on the Synth page in place, and ResizeObserver naturally
+      // recomputes it again the moment the Synth page (and .panel-amplfo) becomes
+      // visible again.
+      if (targetRect.width === 0 && targetRect.height === 0) return;
+
+      const gap = Math.max(0, header.getBoundingClientRect().right - targetRect.right);
+      group.style.marginRight = gap + 'px';
+      // Persisted so a session that opens directly on a non-Synth page (e.g. the
+      // editor remembering last-active page as Looper) has a real, correct gap to
+      // apply immediately instead of the plain CSS fallback until the user happens
+      // to visit Synth at least once - see ApplyCachedContentGap() below, called
+      // at startup before this function ever gets a chance to measure anything.
+      localStorage.setItem(kContentGapStorageKey, String(gap));
+
+      // Looper page's recording/playback gauge (.panel-looper-gauge) - same "gap"
+      // reused here. Found 2026-07-29: the gauge's CSS used a flat `margin-right:
+      // 56px` (just compensating for <main>'s asymmetric 60px-left/4px-right
+      // padding, 60-4=56), which is a plain width:auto block - unlike every other
+      // page's content (`.layout-grid`'s max-content columns, the header's
+      // content-aligned meter above), it has no upper bound and happily stretches
+      // to fill the entire raw window width. Standalone's window is now sized
+      // snugly to content (see config.h's PLUG_WIDTH history), so `gap` is ~0
+      // there and this was invisible - but a DAW that hosts the editor in a
+      // freely-resizable panel wider than that snug size (reported: Studio One's
+      // dockable Instrument panel) reveals it clearly: the gauge visibly stretches
+      // out past where every other element's content stops, looking like it
+      // "escapes the frame" even though it never actually exceeds its own CSS box.
+      // Adding the same `gap` on top of the original 56px baseline makes the
+      // gauge stop at the same content edge as everything else, while leaving
+      // Standalone (gap≈0) unchanged.
+      const looperGauge = document.querySelector('.panel-looper-gauge');
+      if (looperGauge) looperGauge.style.marginRight = (56 + gap) + 'px';
+    }
+
+    const kContentGapStorageKey = 'firstSynthContentGapPx';
+
+    // Applies the last-persisted gap (see AlignMeterToContentEdge()'s own
+    // localStorage.setItem call) immediately at startup, before that function
+    // ever gets a chance to take a real measurement - it can only measure while
+    // the Synth page (.panel-amplfo) happens to be visible, so a session that
+    // reopens directly on a different page (e.g. the editor remembering Looper
+    // as the last-active page) would otherwise show the plain CSS fallback
+    // margins until the user visits Synth at least once. A cached value from
+    // last time is virtually always closer to correct than that fallback, since
+    // the window/panel size a given host presents tends to stay similar across
+    // sessions. Harmless no-op on a genuinely first-ever launch (nothing cached
+    // yet - the CSS fallback values stay in effect exactly as before this fix).
+    function ApplyCachedContentGap() {
+      const cached = localStorage.getItem(kContentGapStorageKey);
+      if (cached === null) return;
+      const gap = Math.max(0, parseFloat(cached)) || 0;
+      const group = document.querySelector('.header-right-group');
+      const looperGauge = document.querySelector('.panel-looper-gauge');
+      if (group) group.style.marginRight = gap + 'px';
+      if (looperGauge) looperGauge.style.marginRight = (56 + gap) + 'px';
+    }
+
+    // Driven by ResizeObserver on the header and the target column, not a
+    // window 'resize' listener - user reported the meter drifting outward as
+    // the window/zoom got smaller, and the browser-harness technique traced
+    // it to `.page-header` (an auto-width flex row, fills its container
+    // regardless of zoom) and `.layout-grid` (max-content, shrink-to-fit, so
+    // it visually shrinks under zoom while the header doesn't) changing size
+    // in ways that don't reliably line up with a single window-level 'resize'
+    // event, especially when only the UI Zoom `zoom` CSS property changes.
+    // ResizeObserver reacts directly to each element's own actual rendered
+    // box size, so it catches zoom changes, native window resizes, and any
+    // future layout change uniformly, regardless of what triggered them.
+    const meterAlignObserver = new ResizeObserver(() => AlignMeterToContentEdge());
+
+    // UI zoom preference - WebView-only visual scale (transform on <main>) paired with
+    // an actual native window resize (kMsgTagSetUIScale, handled in FirstSynth::OnMessage,
+    // which calls the WebViewEditorDelegate's Resize() - genuinely resizes the OS window,
+    // not just the WebView content). <main>'s own layout stays at its natural 100% size;
+    // only its rendered/visual footprint shrinks via transform, so every knob/panel/gap
+    // scales down together, preserving all proportions. Persisted via localStorage so it's
+    // remembered next launch (this project has no other WebView-side persisted prefs yet -
+    // simplest option, no native settings-file work needed for this).
+    const kUIScaleStorageKey = 'firstSynthUIScalePercent';
+
+    function ApplyUIScale(scalePercent, skipNativeResize) {
+      // `zoom` (not `transform: scale()`) - non-standard but fully supported in
+      // Chromium/WebView2, and unlike transform it actually changes the element's
+      // contribution to the scroll-container's scrollWidth/Height, so no
+      // scrollbar appears at the new (smaller) window size. transform was tried
+      // first and left a leftover scrollbar because its visual (post-transform)
+      // size isn't what this browser engine uses for the ancestor's scrollable
+      // overflow calculation - confirmed via direct measurement, don't revert to
+      // transform without re-verifying that.
+      document.querySelector('main').style.zoom = scalePercent / 100;
+      document.getElementById('uiScaleSelect').value = String(scalePercent);
+      localStorage.setItem(kUIScaleStorageKey, String(scalePercent));
+      if (!skipNativeResize) {
+        SAMFUI(0 /* kMsgTagSetUIScale */, scalePercent, 0);
+      }
+      // no explicit meter realign call needed here - meterAlignObserver (see
+      // AlignMeterToContentEdge's own comment) reacts to the resulting layout
+      // change on its own.
+    }
+
+    function RestoreUIScale() {
+      const saved = parseInt(localStorage.getItem(kUIScaleStorageKey), 10);
+      if (saved && saved !== 100) {
+        ApplyUIScale(saved);
+      }
+    }
+
+    // Dark mode - pure WebView/CSS concern, no C++ side at all (unlike UI Zoom, which
+    // needs a real window resize) - so it's applied to <html> immediately at script
+    // load time below, not gated behind the host round-trip, to avoid a light-theme
+    // flash before dark mode kicks in on launch.
+    const kDarkModeStorageKey = 'firstSynthDarkMode';
+
+    function ApplyDarkMode(isDark) {
+      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+      localStorage.setItem(kDarkModeStorageKey, isDark ? '1' : '0');
+      const btn = document.getElementById('darkModeBtn');
+      if (btn) btn.innerHTML = isDark ? '&#9728; Light' : '&#127769; Dark';
+    }
+
+    function ToggleDarkMode() {
+      ApplyDarkMode(document.documentElement.getAttribute('data-theme') !== 'dark');
+    }
+
+    ApplyDarkMode(localStorage.getItem(kDarkModeStorageKey) === '1');
+
+    // PEQ Lock - pure WebView display concern, same as Dark Mode (no C++/param side
+    // at all - the real param values keep working normally underneath regardless of
+    // whether this is showing; locking only hides the curve/knobs so a just-tuned EQ
+    // isn't accidentally nudged, per the user's own framing: "今見えているイコライザの
+    // 全貌が見えて、またエディットできるようになります" when unlocked). Persisted via
+    // localStorage, same pattern as UI Zoom. Defaults to **locked** (unlike Dark
+    // Mode's default-off) when never set before, since the user asked to lock the
+    // panel right now, over an already-tuned EQ - '!== "0"' means anything other than
+    // an explicit prior "unlocked" choice comes up locked, including first launch.
+    const kPEQLockStorageKey = 'firstSynthPEQLocked';
+
+    function ApplyPEQLock(locked) {
+      const content = document.getElementById('peqLockedContent');
+      if (content) content.style.display = locked ? 'none' : '';
+      const toggle = document.getElementById('peqLockToggle');
+      if (toggle) toggle.checked = locked;
+      localStorage.setItem(kPEQLockStorageKey, locked ? '1' : '0');
+    }
+
+    // MIDI CC 64 (Sustain Pedal) - MidiSynth already implements the standard sustain-hold
+    // behavior (notes keep ringing after key-up while held). This button just toggles it
+    // on/off like a latching pedal, since there's no physical pedal in the WebView.
+    let holdActive = false;
+
+    function ToggleHold() {
+      holdActive = !holdActive;
+      SMMFUI(0xB0, 64, holdActive ? 127 : 0);
+      document.getElementById('holdBtn').classList.toggle('active', holdActive);
+    }
+
+    // Dev-only: computer keyboard as a MIDI keyboard, for testing without a real
+    // MIDI controller. Only ever enabled in the standalone app (see FirstSynth.cpp
+    // OnWebContentLoaded) - never active when hosted as a CLAP plugin in a DAW.
+    // Keyed by event.code (physical key position, e.g. "KeyA", "Semicolon"), not
+    // event.key (the character the OS keyboard layout actually produces) - a JIS
+    // keyboard's punctuation keys type different characters than a US keyboard at
+    // the same physical positions, which silently broke the ';'/'''/'['/']' entries
+    // below when they were keyed by event.key (2026-07-26 bug report: "：キーが反応
+    // しません"). event.code is layout-independent, so this works the same on any
+    // physical keyboard layout.
+    const kKeyToNoteOffset = {
+      KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7,
+      KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14,
+      // extended range (2026-07-26) - same alternating white/black-key stagger as
+      // above, continuing past L: P sits above the L/Semicolon boundary (like O
+      // above K/L), then Semicolon is the next natural key. Stopped here - Quote/
+      // BracketLeft/BracketRight (typed as '@'/'['/']' on the user's JIS keyboard)
+      // dropped per user request, since JIS inserts an extra key in this row that
+      // makes those positions not line up the way they do on a US keyboard.
+      KeyP: 15, Semicolon: 16
+    };
+
+    // Wicki-Hayden alternate mapping (2026-08-02, user request, matching Hex MIDI's
+    // "Wicki-Hayden" layout) - the standard isomorphic accordion/concertina layout:
+    // +2 semitones per key moving right within a row, +5 semitones per row moving
+    // UP physically (ZXCV row lowest -> ASDF -> QWERTY -> digit row highest - the
+    // user's own read of Hex MIDI confirmed Z->A->Q ascends by a fourth each row,
+    // the reverse of this file's first attempt, which had the row direction
+    // backwards). Anchored on Z=A#2 (MIDI 46). Offsets below are relative to this
+    // project's existing note-60 reference (kKeyToNoteOffset's KeyA:0 = MIDI 60 =
+    // C4), computed as (target MIDI note) - 60.
+    const kWickiHaydenKeyToNoteOffset = {
+      // ZXCV row (Z=col0 .. /=col9) - lowest row, anchor: Z = A#2 (MIDI 46, -14).
+      // Comma/Period/Slash (2026-08-02 extension) continue the same +2-per-key
+      // pattern - ordinary keys on both JIS/US layouts, no alignment quirk here.
+      KeyZ: -14, KeyX: -12, KeyC: -10, KeyV: -8, KeyB: -6, KeyN: -4, KeyM: -2,
+      Comma: 0, Period: 2, Slash: 4,
+      // ASDF row (A=col0 .. ;=col9), row offset +5 vs ZXCV row. Semicolon
+      // (2026-08-02 extension) is the same key already safely used at the end of
+      // this project's other keyboard map (kKeyToNoteOffset), no JIS quirk.
+      KeyA: -9, KeyS: -7, KeyD: -5, KeyF: -3, KeyG: -1,
+      KeyH: 1, KeyJ: 3, KeyK: 5, KeyL: 7, Semicolon: 9,
+      // QWERTY row (Q=col0 .. [=col11), row offset +5 vs ASDF row (+10 vs ZXCV
+      // row). Quote/BracketLeft (2026-08-02 extension) are the two JIS keys right
+      // after P - confirmed with the user which physical key types '@' (Quote)
+      // vs '[' (BracketLeft), since this exact pair was previously found to sit
+      // in a different place on JIS vs US keyboards (see kKeyToNoteOffset's own
+      // comment) - don't assume US-keyboard event.code intuitions apply here.
+      KeyQ: -4, KeyW: -2, KeyE: 0, KeyR: 2, KeyT: 4,
+      KeyY: 6, KeyU: 8, KeyI: 10, KeyO: 12, KeyP: 14,
+      Quote: 16, BracketLeft: 18,
+      // digit row (1=col0 .. ^=col11), row offset +5 vs QWERTY row (+15 vs ZXCV
+      // row). Minus/Equal (2026-08-02 extension) are the '-' and '^' keys the
+      // user identified as this row's own two extra JIS-keyboard keys, same
+      // pattern as Quote/BracketLeft on the QWERTY row above.
+      Digit1: 1, Digit2: 3, Digit3: 5, Digit4: 7, Digit5: 9,
+      Digit6: 11, Digit7: 13, Digit8: 15, Digit9: 17, Digit0: 19,
+      Minus: 21, Equal: 23
+    };
+
+    // C-System (Chromatic Button Accordion) alternate mapping (2026-08-02, same
+    // request, matching Hex MIDI's "C System" layout) - +3 semitones per key
+    // moving right within a row (a minor third - matches the standard C-system
+    // accordion property "rises an octave every 4 buttons", 12/4=3), +2
+    // semitones per row moving DOWN physically (QWERTY row lowest -> ASDF -> ZXCV
+    // highest - the OPPOSITE row direction from Wicki-Hayden above, confirmed by
+    // the user reading Hex MIDI directly: Q=F2, A=G2, Z=A2, and W=G#2 confirming
+    // the +3 horizontal step). Anchored on Q=F2 (MIDI 41). Row/column extents
+    // (Minus/Equal, Quote/BracketLeft, Semicolon, Comma/Period/Slash) added to
+    // match Wicki-Hayden's for consistency, not yet individually confirmed by the
+    // user for this specific layout - flagged in case they need adjusting.
+    const kCSystemKeyToNoteOffset = {
+      // QWERTY row (Q=col0 .. [=col11) - lowest row, anchor: Q = F2 (MIDI 41, -19)
+      KeyQ: -19, KeyW: -16, KeyE: -13, KeyR: -10, KeyT: -7,
+      KeyY: -4, KeyU: -1, KeyI: 2, KeyO: 5, KeyP: 8,
+      Quote: 11, BracketLeft: 14,
+      // ASDF row (A=col0 .. ;=col9), row offset +2 vs QWERTY row
+      KeyA: -17, KeyS: -14, KeyD: -11, KeyF: -8, KeyG: -5,
+      KeyH: -2, KeyJ: 1, KeyK: 4, KeyL: 7, Semicolon: 10,
+      // ZXCV row (Z=col0 .. /=col9), row offset +2 vs ASDF row (+4 vs QWERTY row)
+      KeyZ: -15, KeyX: -12, KeyC: -9, KeyV: -6, KeyB: -3, KeyN: 0, KeyM: 3,
+      Comma: 6, Period: 9, Slash: 12,
+      // digit row (1=col0 .. ^=col11), row offset -2 vs QWERTY row (one row above it)
+      Digit1: -21, Digit2: -18, Digit3: -15, Digit4: -12, Digit5: -9,
+      Digit6: -6, Digit7: -3, Digit8: 0, Digit9: 3, Digit0: 6,
+      Minus: 9, Equal: 12
+    };
+
+    // Which mapping is active - persisted like Dark Mode/PEQ Lock/UI Zoom (pure
+    // WebView concern, no C++/param side). Three modes now (2026-08-03): 'aw'
+    // (default), 'wicki' (Wicki-Hayden), 'csystem' (C-System chromatic button
+    // accordion) - selected via a <select> dropdown, not a toggle button.
+    const kKeyboardModeStorageKey = 'firstSynthKeyboardMode';
+    const kKeyboardModes = ['aw', 'wicki', 'csystem'];
+    let keyboardMode = kKeyboardModes.includes(localStorage.getItem(kKeyboardModeStorageKey))
+      ? localStorage.getItem(kKeyboardModeStorageKey) : 'aw';
+
+    // Wicki-Hayden mode's own transpose (2026-08-02, matching Hex MIDI's own
+    // Up/Down behavior, per user report): NOT a flat +-12-per-press octave jump -
+    // each Up press moves the whole grid up by one row-step, which alternates
+    // +5/+7 semitones (a whole tone and a perfect fourth - the same two
+    // intervals the grid itself is built from, see kWickiHaydenKeyToNoteOffset's
+    // own comment), landing back on a plain octave only every 2 presses (matches
+    // the user's own example: Z's note C2 -> F2 -> C3 -> F3, i.e. +5,+7,+5).
+    // ArrowUp/ArrowDown (untested combo - the app previously crashed on
+    // ArrowLeft/ArrowRight pressed together with a held note key, cause not
+    // identified, see progress.md - test this pairing carefully before relying
+    // on it).
+    let wickiTransposeSteps = 0;
+    function WickiTransposeOffset(n) {
+      const sign = n < 0 ? -1 : 1;
+      const absN = Math.abs(n);
+      return sign * (6 * absN - (absN % 2));
+    }
+
+    function ApplyKeyboardModeLabel() {
+      const sel = document.getElementById('keyboardModeSelect');
+      if (sel) sel.value = keyboardMode;
+    }
+
+    function SetKeyboardMode(mode) {
+      if (!kKeyboardModes.includes(mode)) return;
+      keyboardMode = mode;
+      localStorage.setItem(kKeyboardModeStorageKey, keyboardMode);
+      ApplyKeyboardModeLabel();
+    }
+
+    let keyboardOctaveShift = 0;
+    const activeKeyNotes = {};
+
+    // Standalone-only manual tempo control (see this control's own HTML comment for
+    // why it isn't a real IParam/knob-control) - called from FirstSynth.cpp's
+    // OnWebContentLoaded(), same APP_API-gated-call pattern as
+    // EnableComputerKeyboardInput() just above.
+    function EnableStandaloneTempoControl() {
+      const el = document.getElementById('standaloneTempoContainer');
+      if (el) el.style.display = '';
+    }
+
+    function SetStandaloneTempo(bpmStr) {
+      const bpm = Math.min(300, Math.max(20, Math.round(Number(bpmStr) || 120)));
+      const input = document.getElementById('standaloneTempoInput');
+      if (input) input.value = bpm; // reflects the clamped value back, e.g. if the user typed something out of range
+
+      const buf = new ArrayBuffer(4);
+      new DataView(buf).setFloat32(0, bpm, true); // little-endian, matches this project's x86 build
+      const binaryStr = String.fromCharCode.apply(null, new Uint8Array(buf));
+      SAMFUI(12 /* kMsgTagSetStandaloneTempo */, -1, btoa(binaryStr));
+    }
+
+    // Cross-format preset browser - see this feature's own HTML comment (the
+    // .preset-bar markup) for why it exists alongside the Standalone-only manual
+    // Save/Load Preset dialog. Works identically in every build; not APP_API-gated.
+
+    // Set right before a Save request, so the dropdown lands on the newly-saved
+    // entry once the refreshed list (kMsgTagPresetList) arrives from C++ a moment
+    // later - that round trip is asynchronous, so this can't just be set inline.
+    let pendingPresetSelection = null;
+
+    // The preset that's actually loaded/active right now - deliberately tracked
+    // separately from the <select>'s own selectedIndex (see
+    // PrepareForPresetReselect() below, which blanks that on every dropdown open
+    // as a side effect, even if the user backs out without picking anything).
+    // Save (overwrite) and Delete both need to know "what's currently loaded"
+    // reliably, independent of that transient visual blank state.
+    let currentPresetName = '';
+
+    // 2026-08-02: the actual sound/params already survive close-and-reopen via
+    // the separate auto-persist-across-launches mechanism (autosave.state), but
+    // "which preset name was selected" isn't itself a param, so it was never part
+    // of that restore - the dropdown just fell back to showing whatever preset
+    // happened to be first in the list, even though the real loaded sound was a
+    // different one entirely. Persisted here via localStorage, same pattern as
+    // UI Zoom/Dark Mode/PEQ Lock - see LoadPreset() (writes it on every load) and
+    // UpdatePresetList() (reads it as a fallback on the very first sync, when the
+    // <select> has no prior value of its own yet).
+    const kLastPresetStorageKey = 'firstSynthLastPreset';
+
+    // Native <select>'s onchange never fires when the user re-picks the option
+    // that's already selected - no value transition happened from the browser's
+    // own perspective, so nothing tells it to fire (2026-07-28 bug report: picking
+    // the current preset again, to discard live knob tweaks and reload its saved
+    // values, silently did nothing - only worked by first picking a *different*
+    // preset, or via the Prev/Next buttons, which call LoadPreset() directly and
+    // don't depend on onchange at all). Fix: clear the selection right as the
+    // dropdown is about to open (mousedown, before the native popup appears), so
+    // whatever the user then picks - even the same visible option - is a real
+    // value change from "(none selected)" to a real index, and onchange fires
+    // reliably every time.
+    //
+    // 2026-07-30 bug report (found in SuiKinKutsu, ported here since this code is
+    // identical): simply opening the dropdown and closing it again without
+    // picking anything (e.g. clicking elsewhere, or Escape) left it showing blank
+    // indefinitely - previously just cosmetic (the "accepted edge case" this
+    // comment used to describe), but once Save (overwrite) and Delete were added
+    // below, a blank select.value broke both of them even though a preset's
+    // settings were still fully loaded. Fixed by restoring the visible selection
+    // from currentPresetName on blur if nothing was actually picked, and by
+    // having Save/Delete key off currentPresetName rather than select.value
+    // directly.
+    function PrepareForPresetReselect(select) {
+      select.selectedIndex = -1;
+    }
+
+    function RestorePresetSelectionIfBlank(select) {
+      if (select.selectedIndex === -1 && currentPresetName) {
+        select.value = currentPresetName;
+      }
+    }
+
+    // shared by Save/Save As/Load/Delete - preset names are UTF8 (can be
+    // non-English, e.g. Japanese) and travel to C++ as base64 over SAMFUI.
+    function SendPresetNameMessage(msgTag, name) {
+      const bytes = new TextEncoder().encode(name);
+      const binaryStr = String.fromCharCode.apply(null, bytes);
+      SAMFUI(msgTag, -1, btoa(binaryStr));
+    }
+
+    function PromptSavePreset() {
+      const name = window.prompt('Preset name:', '');
+      if (!name) return; // cancelled, or submitted empty
+
+      pendingPresetSelection = name;
+      currentPresetName = name;
+      SendPresetNameMessage(14 /* kMsgTagPresetSave */, name);
+    }
+
+    // 2026-07-30 user request (ported from SuiKinKutsu): overwrite the
+    // currently-selected preset with the live/edited settings, without retyping
+    // its name. Falls back to the Save As prompt if nothing is currently loaded
+    // (e.g. right after a Delete), since there's nothing to overwrite in that
+    // case.
+    function SaveCurrentPreset() {
+      if (!currentPresetName) {
+        PromptSavePreset();
+        return;
+      }
+
+      pendingPresetSelection = currentPresetName;
+      SendPresetNameMessage(14 /* kMsgTagPresetSave */, currentPresetName);
+    }
+
+    // 2026-08-09 user request: Ctrl+S does the same overwrite-in-place as
+    // clicking the Save button. Registered unconditionally at the page level
+    // (not inside EnableComputerKeyboardInput(), which is Standalone-only) so
+    // it works in every host format, not just Standalone. preventDefault()
+    // stops the browser's own "Save Page" shortcut from firing inside the
+    // WebView.
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+        e.preventDefault();
+        SaveCurrentPreset();
+      }
+    });
+
+    function LoadPreset(name) {
+      if (!name) return;
+      currentPresetName = name;
+      localStorage.setItem(kLastPresetStorageKey, name);
+      SendPresetNameMessage(15 /* kMsgTagPresetLoad */, name);
+
+      // 2026-08-01 bug report: a native <select> keeps keyboard focus after a
+      // selection, and while focused it independently handles letter keys as its
+      // own "jump to the next option starting with this letter" typeahead search -
+      // completely separate from EnableComputerKeyboardInput()'s document-level
+      // keydown listener used for playing notes. So after picking a preset, every
+      // subsequent press of a note key that also happened to match the new
+      // preset's first letter both played a note AND cycled to the next
+      // same-starting-letter preset, which looked like presets (and therefore every
+      // knob) changing wildly while just trying to hold a note. Blurring the
+      // select right after a load hands focus back to the page so only the note
+      // handler sees the keystroke.
+      const select = document.getElementById('presetSelect');
+      if (select) select.blur();
+    }
+
+    // 2026-07-30 user request (ported from SuiKinKutsu): delete the
+    // currently-selected preset. Destructive and has no undo, so confirm() first
+    // - unlike Save (overwrite), which is a common enough action to not warrant a
+    // confirmation on every use.
+    function DeletePreset() {
+      if (!currentPresetName) return;
+
+      if (!window.confirm(`Delete preset "${currentPresetName}"? This cannot be undone.`)) return;
+
+      SendPresetNameMessage(16 /* kMsgTagPresetDelete */, currentPresetName);
+      currentPresetName = ''; // it's gone - Save must fall back to Save As now, not silently recreate it
+    }
+
+    // wraps around at either end, like a typical hardware-synth patch browser
+    function CyclePreset(direction) {
+      const select = document.getElementById('presetSelect');
+      if (!select || select.options.length === 0) return;
+
+      let idx = select.selectedIndex + direction;
+      if (idx < 0) idx = select.options.length - 1;
+      if (idx >= select.options.length) idx = 0;
+
+      select.selectedIndex = idx;
+      LoadPreset(select.value);
+    }
+
+    // called from the kMsgTagPresetList handler below (initial load, and again
+    // after every save) - names is already split into an array, no extension.
+    function UpdatePresetList(names) {
+      const select = document.getElementById('presetSelect');
+      if (!select) return;
+
+      // Falls back to the persisted last-loaded preset name (see
+      // kLastPresetStorageKey's own comment) only when the <select> genuinely has
+      // no value of its own yet - i.e. this very first sync after launch/reopen,
+      // before the user has touched the dropdown this session. Any later call
+      // (Save/Delete refresh, etc.) already has a real select.value and takes
+      // priority, same as before.
+      const targetValue = pendingPresetSelection !== null ? pendingPresetSelection
+        : (select.value || localStorage.getItem(kLastPresetStorageKey) || '');
+      pendingPresetSelection = null;
+
+      select.innerHTML = '';
+      if (names.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '(no presets saved)';
+        select.appendChild(opt);
+        return;
+      }
+
+      names.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+      });
+
+      // keep the target preset selected if it's actually in the refreshed list
+      // (the common case: same preset as before, or the one just saved) rather
+      // than resetting to the first entry
+      if (names.includes(targetValue)) {
+        select.value = targetValue;
+        // keeps Save/Delete's own bookkeeping in sync when this restores the
+        // dropdown from kLastPresetStorageKey on a fresh load, not just a live
+        // pick - see currentPresetName's own comment
+        currentPresetName = targetValue;
+      }
+    }
+
+    // called from FirstSynth.cpp's OnWebContentLoaded() with config.h's
+    // PLUG_VERSION_STR, so the displayed version can never drift from the actual
+    // compiled-in one
+    function SetVersionLabel(versionStr) {
+      const el = document.getElementById('versionLabel');
+      if (el) el.textContent = 'v' + versionStr;
+    }
+
+    function EnableComputerKeyboardInput() {
+      const sel = document.getElementById('keyboardModeSelect');
+      if (sel) sel.style.display = '';
+      ApplyKeyboardModeLabel();
+
+      document.addEventListener('keydown', (e) => {
+        if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+        const key = e.code;
+
+        if (keyboardMode === 'wicki') {
+          // Z/X/etc are real note keys in this mode - F1/F2 do the grid transpose
+          // instead (see WickiTransposeOffset's own comment for why this isn't a
+          // flat +-12 jump). NOT Arrow keys - confirmed 2026-08-02 that BOTH
+          // Left/Right and Up/Down arrows crash this app outright when pressed
+          // together with a held note key (cause still unknown - some general
+          // arrow-key incompatibility in this WebView setup, unrelated to Hex
+          // MIDI's own unrelated implementation, which has no such issue). Not
+          // PageUp/PageDown either - user didn't have easy access to those keys.
+          if (key === 'F1') { wickiTransposeSteps = Math.max(-8, wickiTransposeSteps - 1); e.preventDefault(); return; }
+          if (key === 'F2') { wickiTransposeSteps = Math.min(8, wickiTransposeSteps + 1); e.preventDefault(); return; }
+        } else if (keyboardMode === 'csystem') {
+          // Simple flat +-12-semitone-per-press octave shift (same convention as
+          // the default AW mode's Z/X keys) - unlike Wicki-Hayden, C-System has no
+          // alternating-interval grid quirk to replicate from Hex MIDI.
+          if (key === 'F1') { keyboardOctaveShift = Math.max(-4, keyboardOctaveShift - 1); e.preventDefault(); return; }
+          if (key === 'F2') { keyboardOctaveShift = Math.min(4, keyboardOctaveShift + 1); e.preventDefault(); return; }
+        } else {
+          // F1/F2 octave shift (changed from Z/X 2026-08-03 per user request, to
+          // match the same keys used by Wicki-Hayden/C-System modes for consistency).
+          if (key === 'F1') { keyboardOctaveShift = Math.max(-4, keyboardOctaveShift - 1); e.preventDefault(); return; }
+          if (key === 'F2') { keyboardOctaveShift = Math.min(4, keyboardOctaveShift + 1); e.preventDefault(); return; }
+        }
+
+        const offsetMap = keyboardMode === 'wicki' ? kWickiHaydenKeyToNoteOffset
+          : keyboardMode === 'csystem' ? kCSystemKeyToNoteOffset : kKeyToNoteOffset;
+        if (key in offsetMap && !(key in activeKeyNotes)) {
+          const shift = keyboardMode === 'wicki' ? WickiTransposeOffset(wickiTransposeSteps) : keyboardOctaveShift * 12;
+          const note = 60 + shift + offsetMap[key];
+          if (note >= 0 && note <= 127) {
+            activeKeyNotes[key] = note;
+            SMMFUI(0x90, note, 100);
+          }
+        }
+      });
+
+      document.addEventListener('keyup', (e) => {
+        const key = e.code;
+        if (key in activeKeyNotes) {
+          SMMFUI(0x80, activeKeyNotes[key], 0);
+          delete activeKeyNotes[key];
+        }
+      });
+    }
+
+    const kNumLFOShapes = 6;
+
+    // shape selector and sync toggle are duplicated 3x (Pitch/Filter/Amp LFO) -
+    // each instance is looked up by its own param-id via data-param-id, rather than
+    // a hardcoded element id, so this logic doesn't need to know how many LFOs exist
+    function SetShape(paramId, btn) {
+      const shapeIdx = parseInt(btn.dataset.shape);
+      SPVFUI(paramId, shapeIdx / (kNumLFOShapes - 1));
+      UpdateShapeSelection(paramId, shapeIdx);
+    }
+
+    function UpdateShapeSelection(paramId, shapeIdx) {
+      const container = document.querySelector(`.shape-selector[data-param-id="${paramId}"]`);
+      container.querySelectorAll('.shape-btn').forEach((btn) => {
+        btn.classList.toggle('selected', parseInt(btn.dataset.shape) === shapeIdx);
+      });
+    }
+
+    // Modulation Matrix's Source/Dest <select>s are enum params, same normalization
+    // convention SetShape() above already uses for LFO Shape - the option's own
+    // value is the real EMatrixSource/EMatrixDest index (FirstSynth_DSP.h), divided
+    // by (option count - 1) to get the [0,1] value SPVFUI expects.
+    function SetMatrixEnum(paramId, selectEl) {
+      const numOptions = selectEl.options.length;
+      SPVFUI(paramId, parseInt(selectEl.value) / (numOptions - 1));
+    }
+
+    function SetSync(paramId, checkbox) {
+      SPVFUI(paramId, checkbox.checked ? 1 : 0);
+      // Update Rate knob visibility directly here, not via OnParamChange's
+      // kLFOSyncParams branch - confirmed this session (Looper Reverse
+      // investigation) that the host doesn't call OnParamChange back for a
+      // self-originated checkbox change, only for the initial load/preset-recall
+      // sync, so waiting on that round-trip here would never actually toggle live.
+      UpdateRateKnobVisibility(paramId, checkbox.checked);
+    }
+
+    // Filter Type - 3-way switch (LP/BP/HP), not a knob, see this control's own
+    // HTML comment. Same normalize-by-(count-1) convention SetShape() uses for
+    // LFO Shape, just hardcoded to param 24 / 3 options since there's only ever
+    // one of these (unlike the LFO shape pickers, which repeat per LFO).
+    function SetFilterType(btn) {
+      const idx = parseInt(btn.dataset.idx);
+      SPVFUI(24, idx / 2);
+      UpdateFilterTypeSelection(idx);
+    }
+
+    function UpdateFilterTypeSelection(idx) {
+      document.querySelector('.filter-type-selector').querySelectorAll('.shape-btn').forEach((btn) => {
+        btn.classList.toggle('selected', parseInt(btn.dataset.idx) === idx);
+      });
+    }
+
+    function SetDelayPingPong(isOn) {
+      SPVFUI(47, isOn ? 1 : 0);
+    }
+
+    function SetLooperReverse(isOn) {
+      SPVFUI(51, isOn ? 1 : 0);
+      // Update the walker's direction directly here, not via OnParamChange's
+      // param===51 branch - confirmed via DevTools (adding a temporary console.log
+      // wrapper around OnParamChange) that the host never calls it back for this
+      // self-originated checkbox change at all, not just during an active drag as
+      // the pre-existing knob-control caveat describes (see Known Issues elsewhere
+      // in this file) - so waiting on that round-trip left the walker never
+      // updating. OnParamChange's own param===51 branch is left in place as a
+      // fallback for the (currently unconfirmed, but plausible) case of a host-
+      // side/automation-driven change.
+      UpdateLooperGaugeReverse(isOn);
+    }
+
+    // Looper transport - state is NOT a plugin param (it's not something you'd want to
+    // automate or have baked into a saved preset - loops are ephemeral per-session
+    // recordings). Uses the same custom-message channel as the UI Zoom preference
+    // (SAMFUI/OnMessage). C++ owns the state machine (LooperEffect::CycleTransport() in
+    // FirstSynth_Looper.h) - this button doesn't decide the next state itself, it just
+    // asks to cycle and waits for C++ to push back the actual new state (see
+    // OnMessage()'s msgTag===3 branch below) - that's what keeps a DSP-initiated
+    // transition (auto-stop at the 40s buffer cap) correctly reflected in the UI too,
+    // not just button-driven ones.
+    let looperState = 0; // 0=Empty 1=Recording 2=Playing 3=Overdubbing 4=Stopped
+    // Labels show the CURRENT state, not the action a click will trigger next - an
+    // earlier version showed the upcoming action ("Overdub" while actually Playing,
+    // "Play" while actually Overdubbing), which read as backwards/confusing since it
+    // looked like a status readout but was actually showing the opposite of what was
+    // happening. What a click does is implied by the cycle (Record->Overdub->Play->
+    // Overdub->Play->..., changed 2026-07-27 from Record->Play->Overdub->... - see
+    // FirstSynth_Looper.h's CycleTransport() comment), same as a real loop pedal
+    // footswitch - it doesn't need spelling out.
+    const kLooperStateLabels = ['Record', 'Recording…', 'Playing', 'Overdubbing', 'Stopped'];
+    const kLooperStateClasses = ['looper-empty', 'looper-recording', 'looper-playing', 'looper-overdubbing', 'looper-stopped'];
+
+    function UpdateLooperButton() {
+      const btn = document.getElementById('looperTransportBtn');
+      btn.textContent = kLooperStateLabels[looperState];
+      kLooperStateClasses.forEach(c => btn.classList.remove(c));
+      btn.classList.add(kLooperStateClasses[looperState]);
+      RefreshWalkerDirection(); // state affects facing too, see that function's comment
+    }
+
+    // Recording/playback gauge - see FirstSynth_Looper.h's GetBarFraction()/
+    // GetCursorFraction() for what these two numbers mean (both relative to the full
+    // 40s cap, not the actual loop length) and the .panel-looper-gauge CSS comment for
+    // the visual design. Pushed every OnIdle tick (kMsgTagLooperProgress) regardless
+    // of state - Empty/Stopped just render as an empty/static gauge since both
+    // fractions are 0 or unchanging in those states.
+    let lastCursorFraction = 0;
+
+    // remembered so UpdateCutPendingOverlay() can cap a right-cut's blink region at
+    // the actual recorded end, not the gauge's full (40s-cap) width - see that
+    // function's own comment.
+    let currentBarFraction = 0;
+
+    function UpdateLooperGauge(barFraction, cursorFraction) {
+      const fill = document.getElementById('looperGaugeFill');
+      const cursor = document.getElementById('looperGaugeCursor');
+      if (!fill || !cursor) return;
+
+      currentBarFraction = barFraction;
+      fill.style.width = (barFraction * 100) + '%';
+      kLooperStateClasses.forEach(c => fill.classList.remove(c));
+      fill.classList.add(kLooperStateClasses[looperState]);
+
+      // Experimental (private/todo.txt: "間を見せずに一瞬で移動するように（試しに。
+      // 戻すかも）") - when the cursor wraps around the loop boundary, skip the usual
+      // 80ms slide-across and snap instantly instead. Detected by *direction*, not a
+      // fixed jump-size threshold (an earlier version used
+      // Math.abs(cursorFraction-lastCursorFraction) > 0.5, which missed short loops
+      // entirely - GetCursorFraction() is always scaled against the full 40s cap, not
+      // the actual loop length, so a short loop's wrap-point jump can be tiny in
+      // absolute terms, e.g. only ~0.03 for a 2s loop, nowhere near a 0.5 threshold).
+      // A wrap is instead "moving the wrong way for the current direction": forward
+      // playback should only ever increase, reverse only ever decrease, so any
+      // decrease-while-forward or increase-while-reverse can only be the wrap point,
+      // regardless of loop length.
+      const reversingNow = looperReverse && (looperState === 2 || looperState === 3);
+      const wrapped = reversingNow ? (cursorFraction > lastCursorFraction) : (cursorFraction < lastCursorFraction);
+      cursor.style.transition = wrapped ? 'none' : '';
+      cursor.style.left = (cursorFraction * 100) + '%';
+      if (wrapped) void cursor.offsetWidth; // force the 'none' transition to apply before any later change re-enables it
+      lastCursorFraction = cursorFraction;
+      // Stopped keeps the cursor visible right where it stopped (the recorded
+      // buffer is still there, just not advancing) - only Empty (nothing recorded
+      // at all yet) hides it entirely.
+      cursor.style.visibility = looperState === 0 ? 'hidden' : 'visible';
+      // the walk-bounce animation itself should only run while actually
+      // advancing (Recording/Playing/Overdubbing) - freeze the pose in place
+      // while Stopped instead of leaving it bobbing on the spot.
+      const isAdvancing = looperState === 1 || looperState === 2 || looperState === 3;
+      const walker = cursor.querySelector('.walker');
+      if (walker) walker.style.animationPlayState = isAdvancing ? 'running' : 'paused';
+    }
+
+    let looperReverse = false;
+
+    // Rough peak waveform of the recorded loop, drawn under the gauge bar. `peaks`
+    // is a Float32Array of LooperEffect::kWaveformBuckets values (0..1), spanning
+    // the full 40s cap the same way the gauge's own barFraction/cursorFraction do -
+    // see FirstSynth_Looper.h's GetWaveformPeaks() comment. The canvas element is
+    // plain width:100% (same parent, same box model as .looper-gauge-track), so its
+    // x-axis already lines up with the gauge's without any extra scaling here.
+    function DrawLooperWaveform(peaks) {
+      const canvas = document.getElementById('looperGaugeWaveform');
+      if (!canvas) return;
+
+      const cssWidth = canvas.clientWidth;
+      const cssHeight = canvas.clientHeight;
+      if (cssWidth <= 0 || cssHeight <= 0) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(cssWidth * dpr);
+      canvas.height = Math.round(cssHeight * dpr);
+
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+      // faint, matches the gauge track's own muted/subtle styling rather than
+      // competing with the state-colored fill above it
+      const color = getComputedStyle(document.documentElement).getPropertyValue('--muted-text').trim() || '#98a2b3';
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.75;
+
+      const n = peaks.length;
+      const barWidth = cssWidth / n;
+      const centerY = cssHeight / 2;
+
+      for (let i = 0; i < n; i++) {
+        const h = peaks[i] * cssHeight;
+        if (h <= 0) continue; // leave unrecorded buckets fully blank, not a flat line
+        ctx.fillRect(i * barWidth, centerY - h / 2, Math.max(1, barWidth - 1), h);
+      }
+
+      ctx.globalAlpha = 1;
+    }
+
+    function UpdateLooperGaugeReverse(isReverse) {
+      looperReverse = isReverse;
+      RefreshWalkerDirection();
+    }
+
+    // The walker's facing direction reflects which way the cursor is *actually*
+    // moving right now, not just the Reverse toggle by itself - user pointed out
+    // that Recording always writes forward (left to right) regardless of the
+    // Reverse setting (Reverse only affects *playback* direction, in
+    // FirstSynth_Looper.h's Process() - the Recording branch never reads
+    // mReverse at all), so the walker should face right while Recording even if
+    // Reverse happens to be toggled on, and only actually mirror during
+    // Playing/Overdubbing, where Reverse genuinely does reverse the cursor's
+    // direction of travel. Called whenever either input changes (state via
+    // UpdateLooperButton(), or the Reverse toggle via UpdateLooperGaugeReverse()).
+    function RefreshWalkerDirection() {
+      const cursor = document.getElementById('looperGaugeCursor');
+      if (!cursor) return;
+      const reversing = looperReverse && (looperState === 2 || looperState === 3); // Playing or Overdubbing
+      cursor.classList.toggle('reverse', reversing);
+    }
+
+    function LooperTransport() {
+      SAMFUI(1 /* kMsgTagLooperTransport */, 0, 0);
+    }
+
+    function LooperStop() {
+      SAMFUI(2 /* kMsgTagLooperStop */, 0, 0);
+    }
+
+    function LooperClear() {
+      SAMFUI(4 /* kMsgTagLooperClear */, 0, 0);
+    }
+
+    // Cut tool: two mutually-exclusive one-shot "modes" (not params) - click one to
+    // select it, then click/touch the gauge or waveform below to actually perform
+    // the cut at that position (OnGaugeAreaClick()). Clicking the already-selected
+    // tool deselects it, same toggle feel as the Reverse switch nearby.
+    let selectedCutTool = null; // null | 'left' | 'right'
+
+    function SelectCutTool(tool) {
+      selectedCutTool = (selectedCutTool === tool) ? null : tool;
+      UpdateCutToolButtons();
+      RestartCutToolTimeout();
+    }
+
+    function UpdateCutToolButtons() {
+      document.getElementById('cutToolLeft').classList.toggle('active', selectedCutTool === 'left');
+      document.getElementById('cutToolRight').classList.toggle('active', selectedCutTool === 'right');
+      document.getElementById('looperGaugeArea').classList.toggle('cut-tool-active', selectedCutTool !== null);
+      if (!selectedCutTool) OnGaugeAreaLeave(); // deselecting the tool mid-hover shouldn't leave the guide line stuck on screen
+    }
+
+    // 30s idle-timeout: a selected cut tool auto-deselects if no cut actually lands
+    // within that window (user: "ハサミスイッチを点灯したあと、カットが行われない
+    // まま30秒がたったら消える（また押すまでは無効になる）"), same as if the button
+    // had been clicked again manually. Restarted - not just started once on select -
+    // both whenever a tool is freshly selected/switched (SelectCutTool()) and
+    // whenever a cut actually lands (OnGaugeAreaClick()), so genuine activity keeps
+    // the tool alive rather than always expiring exactly 30s after the initial
+    // press regardless of use. Clearing any existing timer unconditionally at the
+    // top (before deciding whether to start a new one) also naturally covers a
+    // manual deselect - selectedCutTool is already null by the time this runs from
+    // SelectCutTool(), so it just clears without restarting.
+    let cutToolTimeoutId = null;
+
+    function RestartCutToolTimeout() {
+      if (cutToolTimeoutId !== null) {
+        clearTimeout(cutToolTimeoutId);
+        cutToolTimeoutId = null;
+      }
+      if (selectedCutTool) {
+        cutToolTimeoutId = setTimeout(() => {
+          cutToolTimeoutId = null;
+          selectedCutTool = null;
+          UpdateCutToolButtons();
+        }, 30000);
+      }
+    }
+
+    // Only meaningful once a cut has actually landed and can be undone - disabled
+    // otherwise so it doesn't look like a no-op button the rest of the time.
+    // Driven by kMsgTagLooperUndoAvailable from C++ (see UpdateUndoAvailable()),
+    // *not* the pending-cut blink state (cutPendingActive) - a landed cut and a
+    // still-pending one are different things now (2026-07-27, see progress.md).
+    let hasUndoAvailable = false;
+
+    function UpdateUndoButton() {
+      const btn = document.getElementById('looperUndoBtn');
+      if (btn) btn.disabled = !hasUndoAvailable;
+    }
+
+    // kind: 0 or 1, straight from kMsgTagLooperUndoAvailable's single byte.
+    function UpdateUndoAvailable(kind) {
+      hasUndoAvailable = kind !== 0;
+      UpdateUndoButton();
+    }
+
+    function UndoLastCut() {
+      if (!hasUndoAvailable) return;
+      SAMFUI(10 /* kMsgTagLooperUndoCut - same tag number as the old CancelCut, repurposed */, 0, 0);
+    }
+
+    // Sends the actual cut request (kMsgTagLooperCut) - position is wherever the
+    // user clicked, as a 0..1 fraction of the gauge's own width, same scale C++'s
+    // GetBarFraction()/GetPendingCutFraction() already use. The cut isn't applied
+    // immediately - see FirstSynth_Looper.h's QueueCut() comment - the pending-cut
+    // blink (UpdateCutPendingOverlay(), driven by kMsgTagLooperCutPending coming
+    // back from C++) is the actual confirmation this went through, not this call.
+    //
+    // No-op past the actually-recorded content (frac > currentBarFraction, the
+    // gauge's own unlit remainder past its color fill - user: "録音されてない
+    // ゲージの場所ではカットすることもできない仕様に") - cutting "nothing" there
+    // isn't meaningful, and C++'s QueueCut() would otherwise silently clamp it to
+    // the last recorded sample instead of actually rejecting it, landing a cut the
+    // user didn't ask for at a position they didn't click.
+    function OnGaugeAreaClick(e) {
+      if (!selectedCutTool) return;
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      if (frac > currentBarFraction) return;
+      const isLeft = selectedCutTool === 'left';
+
+      const buf = new ArrayBuffer(5);
+      const view = new DataView(buf);
+      view.setUint8(0, isLeft ? 1 : 0);
+      view.setFloat32(1, frac, true); // little-endian, matches this project's x86 build
+      const binaryStr = String.fromCharCode.apply(null, new Uint8Array(buf));
+      SAMFUI(8 /* kMsgTagLooperCut */, -1, btoa(binaryStr));
+
+      RestartCutToolTimeout(); // a real cut just landed - extend the 30s idle window instead of letting it expire
+    }
+
+    // Shared left/width math for "the region that would be/is removed on one side
+    // of frac" - kind 1 = everything *before* frac (left tool), kind 2 = everything
+    // *after* frac up to the actual recorded end (right tool), never all the way to
+    // the gauge's full 100% width since the gauge itself never lights up past the
+    // recorded length (2026-07-26 bug report: a cut's blink used to extend into
+    // that unlit/unrecorded remainder). Shared by UpdateCutPendingOverlay() (queued
+    // cut, blinking) and OnGaugeAreaHover()'s live preview (steady, dimmer) so the
+    // two never drift apart on which side gets shaded.
+    function SetCutRegionStyle(el, kind, frac) {
+      if (kind === 1) {
+        el.style.left = '0%';
+        el.style.width = (frac * 100) + '%';
+      } else {
+        el.style.left = (frac * 100) + '%';
+        el.style.width = (Math.max(0, currentBarFraction - frac) * 100) + '%';
+      }
+    }
+
+    // Thin vertical guide line + a steady shaded preview of the side that would be
+    // removed, both following the cursor across the gauge/waveform while a cut tool
+    // is selected - so it's clear not just *where* a click would cut but *which
+    // side* gets deleted, before committing to it. Same 0..1 fraction math as
+    // OnGaugeAreaClick() itself, just drawn instead of sent. Same recorded-content
+    // cutoff as OnGaugeAreaClick() above - no point previewing a cut where a click
+    // wouldn't do anything.
+    function OnGaugeAreaHover(e) {
+      const line = document.getElementById('looperCutHoverLine');
+      const area = document.getElementById('looperCutHoverArea');
+      if (!line || !area) return;
+
+      if (!selectedCutTool) {
+        line.style.display = 'none';
+        area.style.display = 'none';
+        return;
+      }
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      if (frac > currentBarFraction) {
+        line.style.display = 'none';
+        area.style.display = 'none';
+        return;
+      }
+      line.style.left = (frac * 100) + '%';
+      line.style.display = 'block';
+
+      SetCutRegionStyle(area, selectedCutTool === 'left' ? 1 : 2, frac);
+      area.style.display = 'block';
+    }
+
+    function OnGaugeAreaLeave() {
+      const line = document.getElementById('looperCutHoverLine');
+      const area = document.getElementById('looperCutHoverArea');
+      if (line) line.style.display = 'none';
+      if (area) area.style.display = 'none';
+    }
+
+    // kind: 0 = no pending cut (hides the overlay), 1 = left pending, 2 = right
+    // pending. frac is the same 40s-cap-relative scale as the gauge itself, so the
+    // overlay's left/width percentages line up with it directly, no conversion.
+    // No longer touches the Undo button's enabled state (2026-07-27) - that's
+    // driven independently by UpdateUndoAvailable()/kMsgTagLooperUndoAvailable now.
+    function UpdateCutPendingOverlay(kind, frac) {
+      const el = document.getElementById('looperCutPending');
+      if (!el) return;
+
+      if (kind === 0) {
+        el.style.display = 'none';
+        return;
+      }
+
+      el.style.display = 'block';
+      SetCutRegionStyle(el, kind, frac);
+    }
+
+    // page switch is purely a WebView-side UI concern (not a plugin param) - no SPVFUI call.
+    // Three always-visible tab buttons, one per page, with the active one highlighted -
+    // was a single relabeling cycling button (Synth->Effects->Looper->Synth...) before
+    // the Looper page's own feedback round asked for always-visible tabs showing which
+    // page is currently selected instead.
+    const kPageIds = ['page-synth', 'page-effects', 'page-matrix', 'page-looper'];
+    const kPageTabIds = ['pageTabSynth', 'pageTabEffects', 'pageTabMatrix', 'pageTabLooper'];
+    let currentPageIndex = 0;
+
+    function SetPage(index) {
+      currentPageIndex = index;
+      kPageIds.forEach((id, i) => {
+        document.getElementById(id).style.display = (i === index) ? '' : 'none';
+      });
+      kPageTabIds.forEach((id, i) => {
+        document.getElementById(id).classList.toggle('active', i === index);
+      });
+    }
+
+    const kLFOShapeParams = [6, 31, 36, 70, 74]; // Pitch/Filter/Amp/Mod1/Mod2 LFO Shape
+    const kLFOSyncParams = [9, 34, 39, 73, 77];  // Pitch/Filter/Amp/Mod1/Mod2 LFO Sync
+    const kMatrixEnumParams = [86, 87, 89, 90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 108]; // Matrix Source/Dest <select>s (Amount is a normal knob-control, doesn't need this)
+    const kMatrixSourceParams = [86, 89, 92, 95, 98, 101, 104, 107]; // the Source half of each pair above - see UpdateTimeDestAvailability()
+
+    // 2026-08-01: Mod LFO 1/2 can't actually drive the Env Time destinations (they're
+    // DSP-level/shared, not reachable from the per-voice Trigger() code that evaluates
+    // Env Time - see FirstSynth_DSP.h's Voice::Trigger() comment) - routing one to an Env
+    // Time dest silently did nothing, which read as a bug. Rather than leave that trap in
+    // place, hide/disable the 4 Env Time options in a slot's Dest <select> whenever that
+    // same slot's Source is Mod LFO 1 or Mod LFO 2 (values "1"/"2" - see EMatrixSource in
+    // FirstSynth_DSP.h), and reset Dest back to None if it was already one of them.
+    function UpdateTimeDestAvailability(sourceSelect) {
+      const sourceParamId = parseInt(sourceSelect.dataset.paramId);
+      const destSelect = document.querySelector(`select[data-param-id="${sourceParamId + 1}"]`);
+      const isModLFO = sourceSelect.value === "1" || sourceSelect.value === "2";
+      let resetNeeded = false;
+      for (const opt of destSelect.options) {
+        const v = parseInt(opt.value);
+        if (v >= 14 && v <= 17) { // Amp/Filter/Mod Env 1/Mod Env 2 Time
+          opt.hidden = isModLFO;
+          opt.disabled = isModLFO;
+          if (isModLFO && destSelect.value === opt.value) resetNeeded = true;
+        }
+      }
+      if (resetNeeded) {
+        destSelect.value = "0";
+        SetMatrixEnum(sourceParamId + 1, destSelect);
+      }
+    }
+    // Rate (Hz) and Rate (Tempo) are two separate real params (each independently
+    // automatable), but only one is ever musically meaningful depending on Sync -
+    // user found having both knobs visible at once, side by side, confusing
+    // ("Syncとそうでない場合でツマミが別になっている...一つに統合できませんか").
+    // Rather than merging them into a single param (would lose either free-Hz or
+    // tempo-synced automation), show only the relevant one and hide the other,
+    // toggled by Sync - reads as one unified knob that just changes what it
+    // controls, no DSP/param changes needed.
+    const kLFORateKnobsBySync = { 9: [7, 8], 34: [32, 33], 39: [37, 38], 73: [71, 72], 77: [75, 76] }; // syncParamId -> [hzParamId, tempoParamId]
+
+    // param-id -> [band index 0-4, 'freq'|'gain'|'q'] for the 5-band EQ curve display -
+    // feeds both OnParamChange (host-driven: initial load/preset recall) and each EQ
+    // knob's own 'user-change' listener below (live feedback while dragging, before the
+    // host echoes the change back - same reasoning as the oscillator waveform-display).
+    const kEQParamMap = {
+      56: [0, 'freq'], 57: [0, 'gain'],
+      58: [1, 'freq'], 59: [1, 'gain'], 60: [1, 'q'],
+      61: [2, 'freq'], 62: [2, 'gain'], 63: [2, 'q'],
+      64: [3, 'freq'], 65: [3, 'gain'], 66: [3, 'q'],
+      67: [4, 'freq'], 68: [4, 'gain'],
+    };
+
+    // OnParamChange's `value` is normalized [0,1] (SendParameterValueFromDelegate
+    // always normalizes before calling into JS - see IPlugWebViewEditorDelegate.h),
+    // but the curve display needs the real Hz/dB/Q value - mirrors knob-control.js's
+    // own private normalizedToReal() using the knob's min/max/shape attributes (the
+    // min/max ones get set from the host's "params" JSON on load, see OnMessage
+    // below; shape/shape-exponent are the static ones already on each knob-control
+    // tag in the markup). The 'user-change' listener below passes e.detail.finalValue
+    // instead, which is already real - so this conversion only happens here, once,
+    // at the one call site (OnParamChange) that actually receives a normalized value.
+    function KnobNormalizedToReal(knobEl, normValue) {
+      const min = parseFloat(knobEl.getAttribute('min')) || 0;
+      const max = parseFloat(knobEl.getAttribute('max')) || 100;
+      const shape = knobEl.getAttribute('shape') || 'linear';
+      const shapeExponent = parseFloat(knobEl.getAttribute('shape-exponent')) || 1;
+      if (shape === 'log') {
+        const logMin = min <= 0 ? 0.00000001 : min;
+        return logMin * Math.pow(max / logMin, normValue);
+      }
+      return min + Math.pow(normValue, shapeExponent) * (max - min);
+    }
+
+    // real (already-denormalized) value in, real value out - no further conversion here
+    function UpdateEQCurve(paramId, realValue) {
+      const entry = kEQParamMap[paramId];
+      const display = document.getElementById('eqCurveDisplay');
+      if (!entry || !display) return;
+      const [band, kind] = entry;
+      if (kind === 'freq') display.setFreq(band, realValue);
+      else if (kind === 'gain') display.setGain(band, realValue);
+      else display.setQ(band, realValue);
+    }
+
+    // visibility:hidden, not display:none - the two knob-containers share the same
+    // grid cell (see .rate-knob-slot's CSS comment) specifically so the slot's size
+    // is always the larger of the two; display:none would remove the hidden one
+    // from that sizing calculation and reintroduce the resizing this exists to fix.
+    // pointer-events:none keeps the invisible one from intercepting drags/clicks.
+    function UpdateRateKnobVisibility(syncParamId, isSync) {
+      const pair = kLFORateKnobsBySync[syncParamId];
+      if (!pair) return;
+      const [hzParamId, tempoParamId] = pair;
+      const hzContainer = document.querySelector(`knob-control[param-id="${hzParamId}"]`)?.closest('.knob-container');
+      const tempoContainer = document.querySelector(`knob-control[param-id="${tempoParamId}"]`)?.closest('.knob-container');
+      if (hzContainer) {
+        hzContainer.style.visibility = isSync ? 'hidden' : 'visible';
+        hzContainer.style.pointerEvents = isSync ? 'none' : '';
+      }
+      if (tempoContainer) {
+        tempoContainer.style.visibility = isSync ? 'visible' : 'hidden';
+        tempoContainer.style.pointerEvents = isSync ? '' : 'none';
+      }
+    }
+
+    function OnParamChange(param, value) {
+      if (kLFOShapeParams.includes(param)) {
+        UpdateShapeSelection(param, Math.round(value * (kNumLFOShapes - 1)));
+        return;
+      }
+
+      if (kLFOSyncParams.includes(param)) {
+        document.querySelector(`input[data-param-id="${param}"]`).checked = value > 0.5;
+        UpdateRateKnobVisibility(param, value > 0.5); // covers initial load/preset-recall - see SetSync() for the live-click path
+        return;
+      }
+
+      if (param === 24) {
+        UpdateFilterTypeSelection(Math.round(value * 2));
+        return;
+      }
+
+      if (param === 47 || param === 51) {
+        document.querySelector(`input[data-param-id="${param}"]`).checked = value > 0.5;
+        if (param === 51) UpdateLooperGaugeReverse(value > 0.5); // walker animation direction
+        return;
+      }
+
+      // Modulation Matrix Source/Dest <select>s - these have no knob-control at
+      // all (see SetMatrixEnum()'s own comment for the enum-normalization
+      // convention), so without this branch host-driven changes (initial load,
+      // preset recall, DAW automation) would silently never update them - the
+      // generic knob-control fallback below only ever finds real <knob-control>
+      // elements.
+      if (kMatrixEnumParams.includes(param)) {
+        const select = document.querySelector(`select[data-param-id="${param}"]`);
+        select.value = Math.round(value * (select.options.length - 1));
+        // covers initial load/preset-recall/DAW automation for the Source half of
+        // each pair - see UpdateTimeDestAvailability()'s own comment
+        if (kMatrixSourceParams.includes(param)) UpdateTimeDestAvailability(select);
+        return;
+      }
+
+      if (param === 11) {
+        document.getElementById('waveDisplay1').updateValueFromHost(value);
+        // fall through - the Wave knob-control also needs its own update below
+      }
+
+      if (param === 15) {
+        document.getElementById('waveDisplay2').updateValueFromHost(value);
+        // fall through - the Wave knob-control also needs its own update below
+      }
+
+      // querySelectorAll, not querySelector - most params only ever have one
+      // knob-control, but Gain (param-id 0) now has two (Synth page's Master panel
+      // + Effects page's mirrored copy, see masterGainKnob/effectsGainKnob) and both
+      // need this host-driven sync (e.g. initial load, preset recall, DAW
+      // automation) - a plain querySelector would silently only ever update
+      // whichever one happens to appear first in the DOM.
+      const knobs = document.querySelectorAll(`knob-control[param-id="${param}"]`);
+
+      if (kEQParamMap[param] && knobs[0]) {
+        UpdateEQCurve(param, KnobNormalizedToReal(knobs[0], value));
+        // fall through - the EQ knob-control itself also needs its own update below
+      }
+
+      knobs.forEach((knob) => knob.updateValueFromHost(value));
+    }
+
+    function OnControlChange(ctrlTag, value) {
+    }
+
+    function OnMessage(msgTag, dataSize, data) {
+      if (msgTag == -1 && dataSize > 0) {
+        let json = JSON.parse(window.atob(data));
+
+        switch (json["id"]) {
+          case "params":
+            window["parameters"] = json["params"];
+
+            document.querySelectorAll('knob-control').forEach((element) => {
+              const paramInfo = json["params"][element.paramId];
+              if (paramInfo) {
+                element.setAttribute("min", paramInfo["min"]);
+                element.setAttribute("max", paramInfo["max"]);
+                element.setAttribute("label", paramInfo["name"]);
+                element.setAttribute("default-value", paramInfo["default"]);
+              }
+            });
+
+            document.querySelectorAll('waveform-display').forEach((element) => {
+              const paramInfo = json["params"][element.paramId];
+              if (paramInfo) {
+                element.setAttribute("min", paramInfo["min"]);
+                element.setAttribute("max", paramInfo["max"]);
+              }
+            });
+
+            RestoreUIScale();
+            break;
+        }
+      } else if (msgTag === 3 /* kMsgTagLooperState */ && dataSize > 0) {
+        looperState = window.atob(data).charCodeAt(0);
+        UpdateLooperButton();
+      } else if (msgTag === 5 /* kMsgTagMeterLevel */ && dataSize >= 4) {
+        const bytes = window.atob(data);
+        const buf = new ArrayBuffer(4);
+        const view = new DataView(buf);
+        for (let i = 0; i < 4; i++) view.setUint8(i, bytes.charCodeAt(i));
+        UpdateMeter(view.getFloat32(0, true)); // little-endian - matches this project's x86 build
+      } else if (msgTag === 6 /* kMsgTagLooperProgress */ && dataSize >= 8) {
+        const bytes = window.atob(data);
+        const buf = new ArrayBuffer(8);
+        const view = new DataView(buf);
+        for (let i = 0; i < 8; i++) view.setUint8(i, bytes.charCodeAt(i));
+        UpdateLooperGauge(view.getFloat32(0, true), view.getFloat32(4, true));
+      } else if (msgTag === 7 /* kMsgTagLooperWaveform */ && dataSize >= 4) {
+        const bytes = window.atob(data);
+        // bytes.length (the *decoded* byte count), not dataSize - dataSize turned
+        // out to report the base64-*encoded* string's length here, 4/3 larger than
+        // the real byte count (1200 bytes -> 1600-char base64 string), which made
+        // this compute n=400 instead of the true 300 buckets and squeezed the whole
+        // waveform display to 300/400=75% width (2026-07-26 bug report: the gauge
+        // and waveform's displayed length ratio was consistently off by exactly
+        // this 3/4 factor, regardless of the actual recording length).
+        const n = Math.floor(bytes.length / 4);
+        const buf = new ArrayBuffer(n * 4);
+        const view = new DataView(buf);
+        for (let i = 0; i < n * 4; i++) view.setUint8(i, bytes.charCodeAt(i));
+        DrawLooperWaveform(new Float32Array(buf));
+      } else if (msgTag === 9 /* kMsgTagLooperCutPending */ && dataSize >= 5) {
+        const bytes = window.atob(data);
+        const buf = new ArrayBuffer(5);
+        const view = new DataView(buf);
+        for (let i = 0; i < 5; i++) view.setUint8(i, bytes.charCodeAt(i));
+        UpdateCutPendingOverlay(view.getUint8(0), view.getFloat32(1, true));
+      } else if (msgTag === 11 /* kMsgTagLooperUndoAvailable */ && dataSize >= 1) {
+        UpdateUndoAvailable(window.atob(data).charCodeAt(0));
+      } else if (msgTag === 13 /* kMsgTagPresetList */) {
+        // no dataSize floor here, unlike the other cases above - an empty preset
+        // folder legitimately means dataSize 0 (an empty joined string), not "no
+        // message"/an error case to ignore.
+        const bytes = window.atob(data);
+        const buf = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+        // TextDecoder, not charCodeAt-per-byte like the float-array cases above -
+        // preset names are UTF8 text (can be non-English), and multi-byte
+        // characters need real UTF8 decoding to come back out correctly.
+        const text = new TextDecoder('utf-8').decode(buf);
+        UpdatePresetList(text ? text.split('\n') : []); // "".split('\n') is ['']; not [] - guard for that
+      }
+    }
+  </script>
+</head>
+<body>
+<div id="dragon-watermark"></div>
+<div id="scroll-container">
+<main>
+  <div class="page-header">
+    <h1>FirstSynth</h1>
+    <!-- filled in by SetVersionLabel(), pushed from FirstSynth.cpp's
+         OnWebContentLoaded() using config.h's PLUG_VERSION_STR - that stays the
+         single source of truth rather than duplicating the version string here. -->
+    <span id="versionLabel" class="version-label"></span>
+    <div class="page-tabs">
+      <button id="pageTabSynth" class="page-nav-btn page-tab-btn active" onclick="SetPage(0)">Synth</button>
+      <button id="pageTabEffects" class="page-nav-btn page-tab-btn" onclick="SetPage(1)">Effects</button>
+      <button id="pageTabMatrix" class="page-nav-btn page-tab-btn" onclick="SetPage(2)">Matrix</button>
+      <button id="pageTabLooper" class="page-nav-btn page-tab-btn" onclick="SetPage(3)">Looper</button>
+    </div>
+    <button class="page-nav-btn panic-btn" onclick="Panic()">Panic</button>
+    <label class="zoom-label" for="uiScaleSelect">Zoom</label>
+    <select id="uiScaleSelect" class="zoom-select" onchange="ApplyUIScale(parseInt(this.value))">
+      <option value="100">100%</option>
+      <option value="90">90%</option>
+      <option value="80">80%</option>
+      <option value="70">70%</option>
+      <option value="60">60%</option>
+    </select>
+    <button id="darkModeBtn" class="page-nav-btn" onclick="ToggleDarkMode()">&#127769; Dark</button>
+    <!-- Standalone-only manual tempo (BPM) base for tempo-synced LFOs - a real DAW
+         host already reports its own tempo (mTimeInfo.mTempo), so this control would
+         be meaningless there; hidden by default, revealed only in Standalone via
+         EnableStandaloneTempoControl() (called from FirstSynth.cpp's
+         OnWebContentLoaded(), APP_API-gated). Not a real IParam/knob-control -
+         deliberately kept out of the automatable param list so it can't show up as a
+         confusing no-op automation target in a DAW. Moved here from the Synth page's
+         Master panel (2026-07-28) per user request. Wrapped together with the meter
+         in .header-right-group (below) rather than putting margin-left:auto directly
+         on this element - a display:none element (this one, everywhere except
+         Standalone) doesn't participate in flex layout at all, so its own auto
+         margin would vanish along with it, and the meter would lose its right
+         alignment on every non-Standalone build. The wrapper is always rendered, so
+         it always carries the auto margin reliably regardless of which format this
+         is. -->
+    <div class="header-right-group">
+      <div class="header-tempo-container" id="standaloneTempoContainer" style="display: none;">
+        <span class="toggle-label">Tempo</span>
+        <!-- type="text", not type="number": the WebView host (IPlugWebView_win.cpp)
+             injects its own document-level keydown listener that forwards keystrokes
+             to the native host as global shortcuts whenever
+             document.activeElement.type != "text" - true for type="number" - which
+             flooded the native side with unintended key events while typing here and
+             crashed the app (2026-07-28 bug report). This is the only free-text input
+             in this UI so far (every other <input> is a checkbox); oninput strips
+             non-digits live since type="text" has no built-in numeric restriction. -->
+        <input type="text" inputmode="numeric" id="standaloneTempoInput" class="header-tempo-input" value="120" oninput="this.value = this.value.replace(/[^0-9]/g, '')" onchange="SetStandaloneTempo(this.value)">
+        <span class="toggle-label">BPM</span>
+      </div>
+      <div class="meter-container">
+        <span class="toggle-label">Level</span>
+        <div class="meter-track">
+          <div id="meterFill" class="meter-fill"></div>
+          <div id="meterZeroLine" class="meter-zero-line"></div>
+        </div>
+        <div id="meterClip" class="meter-clip" title="Clip indicator" onclick="ResetClipIndicator()"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cross-format preset browser (2026-07-28) - unlike the Standalone-only
+       manual Save/Load Preset file dialog or any given host's own native VST3/
+       CLAP preset management, this works identically in every build: presets are
+       raw SerializeState() chunks in one fixed shared folder
+       (FirstSynth.cpp's GetPresetsDir()), so a preset saved from one
+       format/host is immediately visible from any other. Its own row, sibling to
+       .page-header rather than nested inside it - that flex row has no wrap, so
+       this was originally (accidentally) left nested inside it by a misplaced
+       closing </div>, squeezing it in as one more flex item and pushing it off
+       the right edge of the visible window entirely (2026-07-28 bug report:
+       "枠の外に出てしまっている") - not a CSS positioning issue, a literal
+       markup-nesting bug. -->
+  <div class="preset-bar">
+    <span class="toggle-label">Preset</span>
+    <button class="preset-nav-btn" onclick="CyclePreset(-1)" title="Previous preset">&#9664;</button>
+    <select id="presetSelect" class="preset-select" onmousedown="PrepareForPresetReselect(this)" onchange="LoadPreset(this.value)" onblur="RestorePresetSelectionIfBlank(this)">
+      <option value="">(no presets saved)</option>
+    </select>
+    <button class="preset-nav-btn" onclick="CyclePreset(1)" title="Next preset">&#9654;</button>
+    <button class="page-nav-btn" onclick="SaveCurrentPreset()" title="Overwrite the selected preset with the current settings">Save</button>
+    <button class="page-nav-btn" onclick="PromptSavePreset()">Save As...</button>
+    <button class="page-nav-btn" onclick="DeletePreset()" title="Delete the selected preset">Delete</button>
+    <!-- computer-keyboard-as-MIDI (EnableComputerKeyboardInput()) is Standalone-only,
+         so this dropdown is hidden by default and only revealed from that same
+         Standalone-only entry point - see its own comment. margin-left separates it
+         from the preset button cluster per user request (roughly under Zoom, to the
+         right of Preset/Save/Save As/Delete, not squeezed into the header itself).
+         Converted from a 2-way toggle button to a 3-way <select> (2026-08-03) to
+         accommodate the added C-System mode alongside AW/Wicki-Hayden. -->
+    <select id="keyboardModeSelect" class="preset-select" onchange="SetKeyboardMode(this.value)" style="display: none; margin-left: 24px;">
+      <option value="aw">Keyboard: AW</option>
+      <option value="wicki">Keyboard: Wicki-Hayden</option>
+      <option value="csystem">Keyboard: C-System</option>
+    </select>
+  </div>
+
+  <div id="page-synth" class="layout-grid">
+    <div class="panel-osc1">
+      <h2>Oscillator 1</h2>
+      <div class="knob-row">
+        <div class="wave-display-container">
+          <span class="toggle-label">Wave</span>
+          <waveform-display id="waveDisplay1" param-id="11"></waveform-display>
+        </div>
+        <div class="knob-container"><knob-control id="waveKnob1" label="Wave" param-id="11"></knob-control></div>
+        <div class="knob-container"><knob-control label="Octave" param-id="12" integer-display step="1"></knob-control></div>
+        <div class="knob-container"><knob-control label="Semi" param-id="13" integer-display step="1"></knob-control></div>
+        <div class="knob-container"><knob-control label="Fine" param-id="14" units="ct"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-osc2">
+      <h2>Oscillator 2</h2>
+      <div class="knob-row">
+        <div class="wave-display-container">
+          <span class="toggle-label">Wave</span>
+          <waveform-display id="waveDisplay2" param-id="15"></waveform-display>
+        </div>
+        <div class="knob-container"><knob-control id="waveKnob2" label="Wave" param-id="15"></knob-control></div>
+        <div class="knob-container"><knob-control label="Octave" param-id="16" integer-display step="1"></knob-control></div>
+        <div class="knob-container"><knob-control label="Semi" param-id="17" integer-display step="1"></knob-control></div>
+        <div class="knob-container"><knob-control label="Fine" param-id="18" units="ct"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-mixer">
+      <h2>Mixer</h2>
+      <div class="knob-row">
+        <div class="knob-container"><knob-control label="Osc 1" param-id="19" units="%"></knob-control></div>
+        <div class="knob-container"><knob-control label="Osc 2" param-id="20" units="%"></knob-control></div>
+        <div class="knob-container"><knob-control label="Noise" param-id="21" units="%" shape-exponent="2"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-bendrange">
+      <!-- invisible h2 spacer, not a real heading - Oscillator 2's own h2 pushes its
+           knob-row down by that element's margin/line-height (see the shared `h2`
+           rule's `margin: 14px 0 6px`); without a matching spacer here this panel's
+           knob-row would start right at the grid line, well above where Oscillator
+           2's content visually starts, even though both panels' boxes are already
+           aligned to the same grid row. Reusing the real h2 element (just hidden)
+           keeps this in sync automatically if the shared h2 styling ever changes. -->
+      <h2 style="visibility: hidden;">&nbsp;</h2>
+      <div class="knob-row">
+        <div class="knob-container"><knob-control label="Bend Range" param-id="110" units="st" integer-display step="1"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-filter">
+      <h2>Filter</h2>
+      <div class="knob-row">
+        <div class="knob-container"><knob-control label="Cutoff" param-id="22" units="Hz" shape="log" integer-display></knob-control></div>
+        <div class="knob-container"><knob-control label="Q" param-id="23" units="%" shape-exponent="2"></knob-control></div>
+        <!-- 3-way switch, not a knob - LP runs a Moog ladder, BP/HP the
+             original SVF (always 24dB now, see ProcessSamplesAccumulating).
+             Same shape-selector-container/shape-btn pattern the LFO Shape
+             pickers use, reused as-is (its 3-column grid already fits 3
+             buttons exactly). -->
+        <div class="shape-selector-container">
+          <span class="toggle-label">Filter Type</span>
+          <div class="shape-selector filter-type-selector" data-param-id="24">
+            <button class="shape-btn" data-idx="0" title="Low Pass (Moog)" onclick="SetFilterType(this)">LP</button>
+            <button class="shape-btn" data-idx="1" title="Band Pass" onclick="SetFilterType(this)">BP</button>
+            <button class="shape-btn" data-idx="2" title="High Pass" onclick="SetFilterType(this)">HP</button>
+          </div>
+        </div>
+        <div class="knob-container"><knob-control label="Key Follow" param-id="55" units="%"></knob-control></div>
+        <div class="knob-container"><knob-control label="Env Amount" param-id="26" units="%"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-filterenv">
+      <h2>Filter ADSR</h2>
+      <div class="knob-row">
+        <div class="knob-container"><knob-control label="Attack" param-id="27" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Decay" param-id="28" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Sustain" param-id="29" units="%"></knob-control></div>
+        <div class="knob-container"><knob-control label="Release" param-id="30" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-ampenv">
+      <h2>Amp / ADSR</h2>
+      <div class="knob-row">
+        <div class="knob-container"><knob-control label="Attack" param-id="2" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Decay" param-id="3" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Sustain" param-id="4" units="%"></knob-control></div>
+        <div class="knob-container"><knob-control label="Release" param-id="5" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-pitchlfo">
+      <h2>Pitch LFO</h2>
+      <div class="knob-row">
+        <div class="shape-selector-container">
+          <span class="toggle-label">Shape</span>
+          <div class="shape-selector" data-param-id="6">
+            <button class="shape-btn" data-shape="0" title="Triangle" onclick="SetShape(6, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 20,4 38,20"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="1" title="Square" onclick="SetShape(6, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 2,4 20,4 20,20 38,20 38,4"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="2" title="Ramp Up" onclick="SetShape(6, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 38,4"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="3" title="Ramp Down" onclick="SetShape(6, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,4 38,20"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="4" title="Sine" onclick="SetShape(6, this)">
+              <svg viewBox="0 0 40 24"><path d="M2,12 Q11,2 20,12 T38,12"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="5" title="S&amp;H" onclick="SetShape(6, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 2,12 14,12 14,4 26,4 26,16 38,16"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="rate-knob-slot">
+          <div class="knob-container"><knob-control label="Rate" param-id="7" units="Hz" shape="log"></knob-control></div>
+          <div class="knob-container"><knob-control label="Rate" param-id="8" value-labels="1/64|1/32|1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4|1/4D|1/2|1/1|2/1|4/1|8/1"></knob-control></div>
+        </div>
+        <div class="toggle-container">
+          <span class="toggle-label">Sync</span>
+          <label class="switch">
+            <input type="checkbox" data-param-id="9" onchange="SetSync(9, this)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="knob-container"><knob-control label="Depth" param-id="10" units="%" shape-exponent="2"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-filterlfo">
+      <h2>Filter LFO</h2>
+      <div class="knob-row">
+        <div class="shape-selector-container">
+          <span class="toggle-label">Shape</span>
+          <div class="shape-selector" data-param-id="31">
+            <button class="shape-btn" data-shape="0" title="Triangle" onclick="SetShape(31, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 20,4 38,20"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="1" title="Square" onclick="SetShape(31, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 2,4 20,4 20,20 38,20 38,4"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="2" title="Ramp Up" onclick="SetShape(31, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 38,4"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="3" title="Ramp Down" onclick="SetShape(31, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,4 38,20"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="4" title="Sine" onclick="SetShape(31, this)">
+              <svg viewBox="0 0 40 24"><path d="M2,12 Q11,2 20,12 T38,12"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="5" title="S&amp;H" onclick="SetShape(31, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 2,12 14,12 14,4 26,4 26,16 38,16"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="rate-knob-slot">
+          <div class="knob-container"><knob-control label="Rate" param-id="32" units="Hz" shape="log"></knob-control></div>
+          <div class="knob-container"><knob-control label="Rate" param-id="33" value-labels="1/64|1/32|1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4|1/4D|1/2|1/1|2/1|4/1|8/1"></knob-control></div>
+        </div>
+        <div class="toggle-container">
+          <span class="toggle-label">Sync</span>
+          <label class="switch">
+            <input type="checkbox" data-param-id="34" onchange="SetSync(34, this)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="knob-container"><knob-control label="Depth" param-id="35" units="%" shape-exponent="2"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-amplfo">
+      <h2>Amp LFO</h2>
+      <div class="knob-row">
+        <div class="shape-selector-container">
+          <span class="toggle-label">Shape</span>
+          <div class="shape-selector" data-param-id="36">
+            <button class="shape-btn" data-shape="0" title="Triangle" onclick="SetShape(36, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 20,4 38,20"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="1" title="Square" onclick="SetShape(36, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 2,4 20,4 20,20 38,20 38,4"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="2" title="Ramp Up" onclick="SetShape(36, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 38,4"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="3" title="Ramp Down" onclick="SetShape(36, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,4 38,20"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="4" title="Sine" onclick="SetShape(36, this)">
+              <svg viewBox="0 0 40 24"><path d="M2,12 Q11,2 20,12 T38,12"/></svg>
+            </button>
+            <button class="shape-btn" data-shape="5" title="S&amp;H" onclick="SetShape(36, this)">
+              <svg viewBox="0 0 40 24"><polyline points="2,20 2,12 14,12 14,4 26,4 26,16 38,16"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="rate-knob-slot">
+          <div class="knob-container"><knob-control label="Rate" param-id="37" units="Hz" shape="log"></knob-control></div>
+          <div class="knob-container"><knob-control label="Rate" param-id="38" value-labels="1/64|1/32|1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4|1/4D|1/2|1/1|2/1|4/1|8/1"></knob-control></div>
+        </div>
+        <div class="toggle-container">
+          <span class="toggle-label">Sync</span>
+          <label class="switch">
+            <input type="checkbox" data-param-id="39" onchange="SetSync(39, this)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="knob-container"><knob-control label="Depth" param-id="40" units="%" shape-exponent="2"></knob-control></div>
+      </div>
+    </div>
+
+    <div class="panel-master">
+      <h2>Master</h2>
+      <div class="knob-row">
+        <div class="knob-container"><knob-control id="masterGainKnob" label="Gain" param-id="0" units="%"></knob-control></div>
+        <!-- margin-left separates Gain (overall master level) from the Glide/Bass
+             Boost pair (note-shaping/tone controls) - user asked for a gap here
+             after Bass Boost was added, per private/todo.txt -->
+        <div class="knob-container" style="margin-left: 20px;"><knob-control label="Glide" param-id="1" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Bass Boost" param-id="54" units="%"></knob-control></div>
+        <div class="knob-container" style="margin-left: 20px;"><knob-control label="Yuragi" param-id="69" units="%"></knob-control></div>
+        <button id="holdBtn" class="test-note" onclick="ToggleHold()">Hold</button>
+      </div>
+    </div>
+
+    <div class="panel-spacer"></div>
+  </div>
+
+  <div id="page-effects" style="display: none;">
+    <div class="effects-row">
+      <!-- mirrors the Synth page's Master Gain knob (param-id 0) - see the
+           masterGainKnob/effectsGainKnob 'user-change' cross-wiring below - user
+           wanted this here so overall level can be adjusted without leaving the
+           Effects page while dialing in Mix amounts, which change perceived loudness -->
+      <div class="panel-master">
+        <h2>Master</h2>
+        <div class="knob-row">
+          <div class="knob-container"><knob-control id="effectsGainKnob" label="Gain" param-id="0" units="%"></knob-control></div>
+        </div>
+      </div>
+
+      <div class="panel-chorus">
+        <h2>Chorus</h2>
+        <div class="knob-row">
+          <div class="knob-container"><knob-control label="Rate" param-id="41" units="Hz" shape="log"></knob-control></div>
+          <div class="knob-container"><knob-control label="Depth" param-id="42" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Mix" param-id="43" units="%"></knob-control></div>
+        </div>
+      </div>
+
+      <div class="panel-delay">
+        <h2>Delay</h2>
+        <div class="knob-row">
+          <div class="knob-container"><knob-control label="Time" param-id="44" units="ms" shape-exponent="2"></knob-control></div>
+          <div class="knob-container"><knob-control label="Feedback" param-id="45" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Mix" param-id="46" units="%"></knob-control></div>
+          <div class="toggle-container">
+            <span class="toggle-label">Ping Pong</span>
+            <label class="switch">
+              <input type="checkbox" data-param-id="47" onchange="SetDelayPingPong(this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-reverb">
+        <h2>Reverb</h2>
+        <div class="knob-row">
+          <div class="knob-container"><knob-control label="Decay" param-id="48" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Damping" param-id="49" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Mix" param-id="50" units="%"></knob-control></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5-band parametric EQ - last in the effects chain (after Reverb), per the
+         user's "Effectの接続の最後に" request. Own .effects-row (not squeezed into
+         the Chorus/Delay/Reverb row above) since the curve display + 5 band columns
+         make this panel much wider than the other three combined. -->
+    <div class="effects-row">
+      <div class="panel-eq">
+        <div class="knob-row" style="margin-top: 16px;">
+          <div class="toggle-container">
+            <span class="toggle-label">PEQ LOCK</span>
+            <label class="switch">
+              <input type="checkbox" id="peqLockToggle" onchange="ApplyPEQLock(this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div id="peqLockedContent">
+          <h2>5-Band EQ</h2>
+          <eq-curve-display id="eqCurveDisplay"></eq-curve-display>
+          <div class="knob-row eq-band-row">
+            <div class="eq-band-col">
+              <div class="knob-container"><knob-control label="Low Freq" param-id="56" units="Hz" shape="log" integer-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Low Gain" param-id="57" units="dB" signed-display></knob-control></div>
+            </div>
+            <div class="eq-band-col">
+              <div class="knob-container"><knob-control label="Freq 2" param-id="58" units="Hz" shape="log" integer-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Gain 2" param-id="59" units="dB" signed-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Q 2" param-id="60"></knob-control></div>
+            </div>
+            <div class="eq-band-col">
+              <div class="knob-container"><knob-control label="Freq 3" param-id="61" units="Hz" shape="log" integer-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Gain 3" param-id="62" units="dB" signed-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Q 3" param-id="63"></knob-control></div>
+            </div>
+            <div class="eq-band-col">
+              <div class="knob-container"><knob-control label="Freq 4" param-id="64" units="Hz" shape="log" integer-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Gain 4" param-id="65" units="dB" signed-display></knob-control></div>
+              <div class="knob-container"><knob-control label="Q 4" param-id="66"></knob-control></div>
+            </div>
+            <div class="eq-band-col">
+              <div class="knob-container"><knob-control label="High Freq" param-id="67" units="Hz" shape="log" integer-display></knob-control></div>
+              <div class="knob-container"><knob-control label="High Gain" param-id="68" units="dB" signed-display></knob-control></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modulation Matrix (2026-07-28) - 2 free LFOs + 2 free ADSR envelopes
+       (dedicated to the matrix, not hard-wired to any single destination like
+       Pitch/Filter/Amp LFO are - see FirstSynth_DSP.h's EMatrixSource/EMatrixDest)
+       plus 4 slots routing a fixed source list to a fixed destination list at a
+       bipolar amount. Placed between Effects and Looper per user request. -->
+  <div id="page-matrix" style="display: none;">
+    <div class="effects-row">
+      <div class="panel-modlfo1">
+        <h2>Mod LFO 1</h2>
+        <div class="knob-row">
+          <div class="shape-selector-container">
+            <span class="toggle-label">Shape</span>
+            <div class="shape-selector" data-param-id="70">
+              <button class="shape-btn" data-shape="0" title="Triangle" onclick="SetShape(70, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 20,4 38,20"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="1" title="Square" onclick="SetShape(70, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 2,4 20,4 20,20 38,20 38,4"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="2" title="Ramp Up" onclick="SetShape(70, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 38,4"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="3" title="Ramp Down" onclick="SetShape(70, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,4 38,20"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="4" title="Sine" onclick="SetShape(70, this)">
+                <svg viewBox="0 0 40 24"><path d="M2,12 Q11,2 20,12 T38,12"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="5" title="S&amp;H" onclick="SetShape(70, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 2,12 14,12 14,4 26,4 26,16 38,16"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="rate-knob-slot">
+            <div class="knob-container"><knob-control label="Rate" param-id="71" units="Hz" shape="log"></knob-control></div>
+            <div class="knob-container"><knob-control label="Rate" param-id="72" value-labels="1/64|1/32|1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4|1/4D|1/2|1/1|2/1|4/1|8/1"></knob-control></div>
+          </div>
+          <div class="toggle-container">
+            <span class="toggle-label">Sync</span>
+            <label class="switch">
+              <input type="checkbox" data-param-id="73" onchange="SetSync(73, this)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-modlfo2">
+        <h2>Mod LFO 2</h2>
+        <div class="knob-row">
+          <div class="shape-selector-container">
+            <span class="toggle-label">Shape</span>
+            <div class="shape-selector" data-param-id="74">
+              <button class="shape-btn" data-shape="0" title="Triangle" onclick="SetShape(74, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 20,4 38,20"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="1" title="Square" onclick="SetShape(74, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 2,4 20,4 20,20 38,20 38,4"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="2" title="Ramp Up" onclick="SetShape(74, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 38,4"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="3" title="Ramp Down" onclick="SetShape(74, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,4 38,20"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="4" title="Sine" onclick="SetShape(74, this)">
+                <svg viewBox="0 0 40 24"><path d="M2,12 Q11,2 20,12 T38,12"/></svg>
+              </button>
+              <button class="shape-btn" data-shape="5" title="S&amp;H" onclick="SetShape(74, this)">
+                <svg viewBox="0 0 40 24"><polyline points="2,20 2,12 14,12 14,4 26,4 26,16 38,16"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="rate-knob-slot">
+            <div class="knob-container"><knob-control label="Rate" param-id="75" units="Hz" shape="log"></knob-control></div>
+            <div class="knob-container"><knob-control label="Rate" param-id="76" value-labels="1/64|1/32|1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4|1/4D|1/2|1/1|2/1|4/1|8/1"></knob-control></div>
+          </div>
+          <div class="toggle-container">
+            <span class="toggle-label">Sync</span>
+            <label class="switch">
+              <input type="checkbox" data-param-id="77" onchange="SetSync(77, this)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-modenv1">
+        <h2>Mod Env 1</h2>
+        <div class="knob-row">
+          <div class="knob-container"><knob-control label="Attack" param-id="78" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Decay" param-id="79" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Sustain" param-id="80" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Release" param-id="81" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        </div>
+      </div>
+
+      <div class="panel-modenv2">
+        <h2>Mod Env 2</h2>
+        <div class="knob-row">
+          <div class="knob-container"><knob-control label="Attack" param-id="82" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Decay" param-id="83" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Sustain" param-id="84" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Release" param-id="85" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="effects-row">
+      <div class="panel-matrix">
+        <h2>Matrix</h2>
+        <!-- Source/Dest <option value> = the real EMatrixSource/EMatrixDest enum
+             index (FirstSynth_DSP.h) - SetMatrixEnum() below normalizes that
+             against the select's own option count, same convention SetShape()
+             already uses for LFO Shape. Order must exactly match both that enum
+             and the InitEnum() string lists in FirstSynth.cpp's constructor. -->
+        <div class="matrix-columns">
+        <div class="matrix-slots-col">
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">1</span>
+          <select class="matrix-select" data-param-id="86" onchange="SetMatrixEnum(86, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="87" onchange="SetMatrixEnum(87, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="88" units="%" signed-display></knob-control></div>
+        </div>
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">2</span>
+          <select class="matrix-select" data-param-id="89" onchange="SetMatrixEnum(89, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="90" onchange="SetMatrixEnum(90, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="91" units="%" signed-display></knob-control></div>
+        </div>
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">3</span>
+          <select class="matrix-select" data-param-id="92" onchange="SetMatrixEnum(92, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="93" onchange="SetMatrixEnum(93, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="94" units="%" signed-display></knob-control></div>
+        </div>
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">4</span>
+          <select class="matrix-select" data-param-id="95" onchange="SetMatrixEnum(95, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="96" onchange="SetMatrixEnum(96, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="97" units="%" signed-display></knob-control></div>
+        </div>
+        </div>
+        <!-- 4 -> 8 slots (2026-07-28 user request) - second column -->
+        <div class="matrix-slots-col">
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">5</span>
+          <select class="matrix-select" data-param-id="98" onchange="SetMatrixEnum(98, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="99" onchange="SetMatrixEnum(99, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="100" units="%" signed-display></knob-control></div>
+        </div>
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">6</span>
+          <select class="matrix-select" data-param-id="101" onchange="SetMatrixEnum(101, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="102" onchange="SetMatrixEnum(102, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="103" units="%" signed-display></knob-control></div>
+        </div>
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">7</span>
+          <select class="matrix-select" data-param-id="104" onchange="SetMatrixEnum(104, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="105" onchange="SetMatrixEnum(105, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="106" units="%" signed-display></knob-control></div>
+        </div>
+        <div class="matrix-slot">
+          <span class="matrix-slot-label">8</span>
+          <select class="matrix-select" data-param-id="107" onchange="SetMatrixEnum(107, this); UpdateTimeDestAvailability(this)">
+            <option value="0">None</option>
+            <option value="1">Mod LFO 1</option>
+            <option value="2">Mod LFO 2</option>
+            <option value="3">Mod Env 1</option>
+            <option value="4">Mod Env 2</option>
+            <option value="5">Velocity</option>
+            <option value="6">Key Follow</option>
+            <option value="7">Mod Wheel</option>
+          </select>
+          <span class="matrix-arrow">&#8594;</span>
+          <select class="matrix-select" data-param-id="108" onchange="SetMatrixEnum(108, this)">
+            <option value="0">None</option>
+            <option value="1">Filter Cutoff</option>
+            <option value="2">Filter Resonance</option>
+            <option value="3">Osc1 Pitch</option>
+            <option value="4">Osc2 Pitch</option>
+            <option value="5">Amp Level</option>
+            <option value="6">Pan</option>
+            <option value="7">Wave Shape 1</option>
+            <option value="8">Wave Shape 2</option>
+            <option value="9">Osc1 Level</option>
+            <option value="10">Osc2 Level</option>
+            <option value="11">Noise Level</option>
+            <option value="12">Osc1 Pitch Fine</option>
+            <option value="13">Osc2 Pitch Fine</option>
+            <option value="14">Amp Env Time</option>
+            <option value="15">Filter Env Time</option>
+            <option value="16">Mod Env 1 Time</option>
+            <option value="17">Mod Env 2 Time</option>
+          </select>
+          <div class="knob-container"><knob-control label="Amount" param-id="109" units="%" signed-display></knob-control></div>
+        </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="panel-velocitycurve">
+        <h2>Velocity Curve</h2>
+        <div class="knob-row">
+          <!-- -100=exponential, 0=linear/proportional, +100=logarithmic - see
+               FirstSynth_DSP.h's Voice::Trigger() for the actual curve math. -->
+          <div class="knob-container"><knob-control label="Curve" param-id="111" units="%" signed-display></knob-control></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-looper" style="display: none;">
+    <div class="effects-row">
+      <div class="panel-looper-transport">
+        <h2>Transport</h2>
+        <div class="looper-transport-row">
+          <button id="looperTransportBtn" class="looper-transport-btn looper-empty" onclick="LooperTransport()">Record</button>
+          <button class="page-nav-btn looper-stop-btn" onclick="LooperStop()">Stop</button>
+          <button class="page-nav-btn looper-clear-btn" onclick="LooperClear()">Clear</button>
+        </div>
+      </div>
+
+      <div class="panel-looper">
+        <h2>Looper</h2>
+        <div class="knob-row">
+          <!-- Speed knob removed 2026-07-22 - see FirstSynth_Looper.h's class comment for why -->
+          <div class="knob-container"><knob-control label="Feedback" param-id="52" units="%"></knob-control></div>
+          <div class="knob-container"><knob-control label="Mix" param-id="53" units="%"></knob-control></div>
+          <div class="toggle-container">
+            <span class="toggle-label">Reverse</span>
+            <label class="switch">
+              <input type="checkbox" data-param-id="51" onchange="SetLooperReverse(this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="looper-cut-tools">
+            <!-- undoes the last cut that landed (2026-07-27, repurposed from
+                 "cancel a still-pending cut" - see progress.md) - enabled/disabled
+                 via hasUndoAvailable, driven by kMsgTagLooperUndoAvailable from
+                 C++, not the old cutPendingActive/blink state. Round-arrow "undo"
+                 icon (not an X) since it's no longer a cancel action. -->
+            <button id="looperUndoBtn" class="looper-cut-btn" title="Undo the last cut" onclick="UndoLastCut()" disabled>
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 4 3 10 9 10"/>
+                <path d="M5.5 15a9 9 0 1 0 2.13-9.36L3 10"/>
+              </svg>
+            </button>
+            <!-- selects the cut tool; the actual cut position comes from the next
+                 click/touch on the gauge/waveform below (OnGaugeAreaClick()) -->
+            <button id="cutToolLeft" class="looper-cut-btn" title="Cut: delete everything before the touched position" onclick="SelectCutTool('left')">
+              <svg viewBox="0 0 32 24" width="34" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 12 L4 8 M9 12 L4 16"/>
+                <circle cx="24" cy="6" r="2.6"/>
+                <circle cx="24" cy="18" r="2.6"/>
+                <line x1="30" y1="4" x2="20.5" y2="13.5"/>
+                <line x1="26" y1="14" x2="30" y2="18"/>
+                <line x1="20.5" y1="10.5" x2="23" y2="13"/>
+              </svg>
+            </button>
+            <button id="cutToolRight" class="looper-cut-btn" title="Cut: delete everything after the touched position" onclick="SelectCutTool('right')">
+              <svg viewBox="0 0 32 24" width="34" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8" cy="6" r="2.6"/>
+                <circle cx="8" cy="18" r="2.6"/>
+                <line x1="2" y1="4" x2="11.5" y2="13.5"/>
+                <line x1="6" y1="14" x2="2" y2="18"/>
+                <line x1="11.5" y1="10.5" x2="9" y2="13"/>
+                <path d="M23 12 L28 8 M23 12 L28 16"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-looper-gauge" id="looperGaugeArea" onclick="OnGaugeAreaClick(event)" onmousemove="OnGaugeAreaHover(event)" onmouseleave="OnGaugeAreaLeave()">
+      <div id="looperCutPending" class="looper-gauge-cut-pending"></div>
+      <div id="looperCutHoverArea" class="looper-gauge-cut-hover-area"></div>
+      <div id="looperCutHoverLine" class="looper-gauge-cut-hover-line"></div>
+      <div class="looper-gauge-track">
+        <div class="looper-gauge-fill-clip">
+          <div id="looperGaugeFill" class="looper-gauge-fill"></div>
+        </div>
+        <div id="looperGaugeCursor" class="looper-gauge-cursor" style="left: 0%;">
+          <!-- hand-drawn walking silhouette (replaced the 🚶 emoji 2026-07-22 - it
+               didn't visibly change when mirrored via scaleX(-1), see progress.md).
+               Drawn facing right: leading leg/arm forward, trailing leg/arm back -
+               a genuine directional stride, so the mirror actually reads as a
+               direction flip instead of looking identical either way. -->
+          <svg class="walker" viewBox="0 0 24 32" width="20" height="27"
+               fill="none" stroke="currentColor" stroke-width="2.6"
+               stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="15" cy="5" r="3" fill="currentColor" stroke="none"/>
+            <path d="M14 8 L12 18"/>
+            <path d="M12 18 L16 24 L19 29"/>
+            <path d="M12 18 L9 25 L7 30"/>
+            <path d="M13 10 L8 16"/>
+            <path d="M13 10 L18 15"/>
+          </svg>
+        </div>
+      </div>
+      <canvas id="looperGaugeWaveform" class="looper-gauge-waveform"></canvas>
+    </div>
+  </div>
+
+</main>
+</div>
+<script>
+  // the waveform-displays have no drag of their own - they only mirror their
+  // Wave knob, and need to update live while dragging (see comment in knob-control.js)
+  document.getElementById('waveKnob1').addEventListener('user-change', (e) => {
+    document.getElementById('waveDisplay1').updateValueFromHost(e.detail.normValue);
+  });
+  document.getElementById('waveKnob2').addEventListener('user-change', (e) => {
+    document.getElementById('waveDisplay2').updateValueFromHost(e.detail.normValue);
+  });
+
+  // same reasoning as the wave knobs above: the EQ curve display has no drag of its
+  // own, so each of the 13 EQ knobs needs to push its live (real, not normalized -
+  // finalValue is already denormalized) value directly while dragging.
+  Object.keys(kEQParamMap).forEach((paramId) => {
+    document.querySelector(`knob-control[param-id="${paramId}"]`)?.addEventListener('user-change', (e) => {
+      UpdateEQCurve(parseInt(paramId), e.detail.finalValue);
+    });
+  });
+
+  // Master Gain is mirrored on both the Synth page (masterGainKnob) and the
+  // Effects page (effectsGainKnob, added so overall level can be adjusted without
+  // leaving the Effects page while dialing in Mix amounts, which change perceived
+  // loudness) - both bound to the same param-id="0", so OnParamChange's
+  // querySelectorAll already keeps them in sync for host-driven updates (initial
+  // load, preset recall, automation). This handles the live-drag case those can't
+  // cover (a host doesn't echo a param change back to the UI while the user is
+  // still actively dragging it) - each knob pushes its own live value straight to
+  // the other, same 'user-change' pattern as the wave-knob/EQ mirroring above.
+  // updateValueFromHost's fromHost=true internally skips re-dispatching
+  // 'user-change'/SPVFUI, so this can't loop back and forth.
+  document.getElementById('masterGainKnob').addEventListener('user-change', (e) => {
+    document.getElementById('effectsGainKnob').updateValueFromHost(e.detail.normValue);
+  });
+  document.getElementById('effectsGainKnob').addEventListener('user-change', (e) => {
+    document.getElementById('masterGainKnob').updateValueFromHost(e.detail.normValue);
+  });
+
+  // pure WebView display state (no host round-trip needed, see kPEQLockStorageKey's
+  // own comment) - safe to restore as soon as the body has parsed, same timing as
+  // the wave-knob listeners just above.
+  ApplyPEQLock(localStorage.getItem(kPEQLockStorageKey) !== '0');
+
+  // the head script's immediate ApplyDarkMode() call (see kDarkModeStorageKey) runs
+  // before #darkModeBtn exists, so it can't set the button's label yet - re-apply now
+  // that the body has parsed, purely to sync the label (the data-theme attribute/CSS
+  // itself was already correct from the moment the head script ran, no flash).
+  ApplyDarkMode(document.documentElement.getAttribute('data-theme') === 'dark');
+
+  // position the meter's 0dB reference line from the same METER_MIN_DB/MAX_DB
+  // constants UpdateMeter() itself uses, so they can never drift out of sync
+  document.getElementById('meterZeroLine').style.left = DbToMeterPercent(0) + '%';
+
+  // Start observing both elements for every future size change (zoom,
+  // window resize - see AlignMeterToContentEdge's and meterAlignObserver's
+  // comments), plus one synchronous call now AND a deferred one shortly after.
+  // Both are needed: confirmed via the browser-harness technique that a
+  // synchronous call made right here, before the page has had a chance to
+  // paint, can measure a transient/wrong layout state that never corrects
+  // itself afterward (not even via ResizeObserver, since the elements' size
+  // doesn't change again once that first paint settles) - so a follow-up call
+  // after a short real delay is needed to catch the correct, settled state.
+  ApplyCachedContentGap();
+  AlignMeterToContentEdge();
+  setTimeout(AlignMeterToContentEdge, 300);
+  // Was `.page-header` - switched to `#scroll-container` 2026-07-29 alongside
+  // AlignMeterToContentEdge's own reference-point fix (see that function's
+  // comment) - `.page-header` changes size as a *result* of this same function's
+  // marginRight write (self-referential, the actual cause of the runaway-margin
+  // bug), `#scroll-container` doesn't (fixed to the real viewport), so it's a
+  // safe resize trigger. `.panel-amplfo` stays observed - it's what actually
+  // reacts to Zoom changes (see AlignMeterToContentEdge's comment on why zoom
+  // needs its own trigger).
+  meterAlignObserver.observe(document.getElementById('scroll-container'));
+  meterAlignObserver.observe(document.querySelector('.panel-amplfo'));
+</script>
+</body>
+</html>

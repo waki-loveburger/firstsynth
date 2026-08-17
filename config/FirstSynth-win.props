@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="UserMacros">
+    <IPLUG2_ROOT>$(ProjectDir)..\..\iPlug2</IPLUG2_ROOT>
+    <BINARY_NAME>FirstSynth</BINARY_NAME>
+    <EXTRA_ALL_DEFS>WEBVIEW_EDITOR_DELEGATE;NO_IGRAPHICS;IDLE_TIMER_RATE=50</EXTRA_ALL_DEFS>
+    <EXTRA_DEBUG_DEFS>DEBUG</EXTRA_DEBUG_DEFS>
+    <EXTRA_RELEASE_DEFS />
+    <EXTRA_TRACER_DEFS />
+    <PDB_FILE>$(SolutionDir)build-win\pdbs\$(TargetName)_$(Platform).pdb</PDB_FILE>
+    <BUILD_DIR>$(SolutionDir)build-win</BUILD_DIR>
+    <CREATE_BUNDLE_SCRIPT>$(IPLUG2_ROOT)\Scripts\create_bundle.bat</CREATE_BUNDLE_SCRIPT>
+    <EXTRA_INC_PATHS>$(IPLUG2_ROOT)\Dependencies\Extras\json11</EXTRA_INC_PATHS>
+    <!-- Override iPlug2's own default (common-win.props: $(LOCALAPPDATA)\Programs\Common\VST3,
+         chosen there so builds never need admin rights) with the real Steinberg-standard
+         system-wide VST3 folder, since Renoise/BespokeSynth (this project's actual test
+         hosts) don't scan the non-standard LOCALAPPDATA path and neither host offers a
+         custom-search-path setting the user could add it to instead (2026-07-28). Writing
+         here needs the current Windows account to already have write permission on this
+         folder - a one-time admin-elevated icacls grant, done by the user themselves, not
+         part of this override.
+         MUST be $(CommonProgramW6432), not $(CommonProgramFiles) - found 2026-07-29 the hard
+         way (Studio One kept showing a stale plugin name no matter how many times it
+         rescanned). $(CommonProgramFiles) resolves based on the BITNESS OF THE MSBUILD.EXE
+         PROCESS evaluating it, not the target platform: under the 32-bit MSBuild.exe (the one
+         vswhere's default MSBuild\Current\Bin\MSBuild.exe resolves to), it silently means
+         "C:\Program Files (x86)\Common Files", so every x64 VST3 build was being copied to the
+         WRONG, 32-bit-labeled folder that 64-bit DAWs never scan - the real
+         "C:\Program Files\Common Files\VST3" kept whatever stale copy happened to land there
+         once before. $(CommonProgramW6432) always means the true 64-bit path regardless of the
+         evaluating process's own bitness - this is exactly why iPlug2's own common-win.props
+         uses $(ProgramW6432)/$(CommonProgramW6432) for VST2_X64_PATH/AAX_X64_PATH already; this
+         override just hadn't matched that convention. -->
+    <VST3_X64_PATH>$(CommonProgramW6432)\VST3</VST3_X64_PATH>
+    <VST3_ARM64EC_PATH>$(CommonProgramW6432)\VST3</VST3_ARM64EC_PATH>
+  </PropertyGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(IPLUG2_ROOT)\common-win.props" />
+  </ImportGroup>
+  <PropertyGroup>
+    <TargetName>$(BINARY_NAME)</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(EXTRA_INC_PATHS);$(IPLUG_INC_PATHS);$(IGRAPHICS_INC_PATHS);$(GLAD_GL2_PATHS);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>$(EXTRA_ALL_DEFS);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wininet.lib;comctl32.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ProgramDatabaseFile>$(PDB_FILE)</ProgramDatabaseFile>
+    </Link>
+    <PostBuildEvent>
+      <Command>CALL "$(SolutionDir)scripts\postbuild-win.bat" "$(TargetExt)" "$(BINARY_NAME)" "$(Platform)" "$(COPY_VST2)" "$(TargetPath)" "$(VST2_ARM64EC_PATH)" "$(VST2_X64_PATH)" "$(VST3_ARM64EC_PATH)" "$(VST3_X64_PATH)" "$(AAX_ARM64EC_PATH)" "$(AAX_X64_PATH)" "$(CLAP_ARM64EC_PATH)" "$(CLAP_X64_PATH)" "$(BUILD_DIR)" "$(VST_ICON)" "$(AAX_ICON)" "$(CREATE_BUNDLE_SCRIPT)" "$(ICUDAT_PATH)"</Command>
+    </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>CALL "$(SolutionDir)scripts\prebuild-win.bat" "$(TargetExt)" "$(BINARY_NAME)" "$(Platform)" "$(TargetPath)" "$(OutDir)"</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <BuildMacro Include="BINARY_NAME">
+      <Value>$(BINARY_NAME)</Value>
+    </BuildMacro>
+    <BuildMacro Include="EXTRA_ALL_DEFS">
+      <Value>$(EXTRA_ALL_DEFS)</Value>
+      <EnvironmentVariable>true</EnvironmentVariable>
+    </BuildMacro>
+    <BuildMacro Include="EXTRA_DEBUG_DEFS">
+      <Value>$(EXTRA_DEBUG_DEFS)</Value>
+    </BuildMacro>
+    <BuildMacro Include="EXTRA_RELEASE_DEFS">
+      <Value>$(EXTRA_RELEASE_DEFS)</Value>
+    </BuildMacro>
+    <BuildMacro Include="EXTRA_TRACER_DEFS">
+      <Value>$(EXTRA_TRACER_DEFS)</Value>
+    </BuildMacro>
+    <BuildMacro Include="PDB_FILE">
+      <Value>$(PDB_FILE)</Value>
+    </BuildMacro>
+    <BuildMacro Include="BUILD_DIR">
+      <Value>$(BUILD_DIR)</Value>
+    </BuildMacro>
+    <BuildMacro Include="CREATE_BUNDLE_SCRIPT">
+      <Value>$(CREATE_BUNDLE_SCRIPT)</Value>
+    </BuildMacro>
+    <BuildMacro Include="EXTRA_INC_PATHS">
+      <Value>$(EXTRA_INC_PATHS)</Value>
+    </BuildMacro>
+  </ItemGroup>
+</Project>

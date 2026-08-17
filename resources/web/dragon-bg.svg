@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 700" fill="none">
+  <g stroke="#000000" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- serpentine body, tail (right) to neck (left), single flowing line -->
+    <path d="M 830 520
+             C 780 560, 700 560, 660 510
+             C 610 445, 650 400, 700 420
+             C 745 438, 730 480, 690 470
+             C 655 462, 650 425, 600 415
+             C 520 398, 470 470, 400 470
+             C 320 470, 300 400, 340 350
+             C 375 305, 430 320, 425 365
+             C 421 402, 375 400, 370 365
+             C 366 335, 300 320, 240 260
+             C 195 216, 190 175, 220 150" />
+
+    <!-- head: snout pointing lower-left, brow/nose bump on top -->
+    <path d="M 235 145
+             C 210 122, 175 118, 150 135
+             C 128 150, 100 152, 78 168
+             C 96 172, 112 168, 122 178
+             C 116 196, 128 212, 152 214
+             C 178 216, 196 198, 192 176
+             C 210 178, 226 168, 235 145" />
+    <!-- upper horn, swept back -->
+    <path d="M 205 128 C 208 106, 226 84, 254 74" />
+    <!-- lower horn, shorter, swept back -->
+    <path d="M 192 145 C 200 128, 216 112, 238 106" />
+    <!-- whiskers, trailing from the snout tip -->
+    <path d="M 78 168 C 56 162, 38 166, 24 158" />
+    <path d="M 84 180 C 64 186, 48 198, 34 200" />
+
+    <!-- mane / spines along neck and back -->
+    <path d="M 245 170 C 265 152, 285 152, 293 134" />
+    <path d="M 250 205 C 270 190, 290 192, 300 172" />
+    <path d="M 300 262 C 318 248, 338 250, 348 230" />
+
+    <!-- fin spikes along the body's outer curve -->
+    <path d="M 400 405 C 400 385, 415 372, 435 372" />
+    <path d="M 470 435 C 472 415, 490 404, 510 408" />
+    <path d="M 560 405 C 566 386, 586 378, 604 386" />
+    <path d="M 690 405 C 700 388, 722 384, 738 394" />
+    <path d="M 760 490 C 772 476, 794 474, 808 486" />
+
+    <!-- simple whisker-like cloud swirl near the tail -->
+    <path d="M 800 555 C 815 545, 815 525, 800 518" />
+    <path d="M 780 580 C 800 578, 812 562, 806 545" />
+  </g>
+</svg>
