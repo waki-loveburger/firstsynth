@@ -40,20 +40,27 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   // FirstSynth_DSP.h, is most audibly sensitive) gets more turning range - same fix
   // already applied to Noise Level for the same "too strong near the left" complaint
   GetParam(kParamFilterResonance)->InitDouble("Resonance", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "FILTER", IParam::ShapePowCurve(2.));
-  // Was a continuous 0-2 LP-BP-HP blend (InitDouble); now a discrete 3-way
-  // choice (InitEnum) - LP now runs a Moog ladder instead of the SVF (see
-  // FirstSynth_DSP.h's ProcessMoogLadder/mFilterType comments), which isn't
-  // blendable against the SVF's Band/High outputs the way the old LP (also
-  // SVF) was, so continuous sweeping across all three was dropped rather than
-  // half-preserved. Same 0/1/2 value range as before, so old saved presets'
-  // exact LP/BP/HP settings (0.0/1.0/2.0) still land correctly - only presets
-  // that had it mid-sweep (a blended value) will snap to the nearest of the three.
+  // Was a continuous 0-2 LP-BP-HP blend, then a discrete 3-way choice
+  // (LP/BP/HP). 2026-08-16: BP/HP retired entirely per user request - the
+  // filter is LP-only now (always the Moog ladder), with a separate fixed
+  // highpass stage in series after it instead (kParamHPFCutoff below) rather
+  // than a selectable filter type. This param is no longer wired to anything
+  // and its UI switch was removed - left registered, not deleted, to preserve
+  // every later param's index for old saved presets/DAW automation lanes that
+  // may still reference it (same reasoning as kParamFilterSlope just below,
+  // which was already retired the same way back on 2026-08-09).
   GetParam(kParamFilterType)->InitEnum("Filter Type", 0, {"LP (Moog)", "BP", "HP"}, IParam::kFlagsNone, "FILTER");
   // No longer wired to anything (BP/HP is unconditionally 24dB now, LP's Moog
   // ladder always was) - the UI toggle was removed per user request. Left
   // registered, not deleted, to preserve every later param's index (see
   // kParamFilterType's own comment above for why that matters for presets).
   GetParam(kParamFilterSlope)->InitBool("24dB Slope", false, "", IParam::kFlagsNone, "FILTER");
+  // Fixed second filter stage, always in series after the main Filter (Moog LP) -
+  // just a plain highpass with only a cutoff knob (no resonance control), see
+  // FirstSynth_DSP.h's Voice::mHPFStage. Default 20Hz (the range's own minimum)
+  // so a freshly-added param on an old preset that never saved a value for it
+  // starts effectively inert rather than silently thinning out the bottom end.
+  GetParam(kParamHPFCutoff)->InitFrequency("HPF Cutoff", 20., 20., 20000.);
   // 0-100%: scales how much the note's own pitch shifts the cutoff (in the same
   // octave-additive way Env Amount/Filter LFO already do) - at 100%, cutoff tracks
   // the keyboard 1:1 (up an octave in pitch = cutoff up an octave), at 0% (default)

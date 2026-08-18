@@ -962,15 +962,6 @@
       color: var(--accent);
     }
 
-    /* Filter Type reuses .shape-btn's box/selected styling (see its own HTML
-       comment) but holds text ("LP"/"BP"/"HP"), not an svg icon - scoped here
-       rather than changing .shape-btn itself, which every LFO Shape picker
-       also uses. */
-    .filter-type-selector .shape-btn {
-      font-size: 12px;
-      font-weight: 700;
-    }
-
     /* Oscillator wave display */
     .wave-display-container {
       display: inline-flex;
@@ -1698,22 +1689,6 @@
       UpdateRateKnobVisibility(paramId, checkbox.checked);
     }
 
-    // Filter Type - 3-way switch (LP/BP/HP), not a knob, see this control's own
-    // HTML comment. Same normalize-by-(count-1) convention SetShape() uses for
-    // LFO Shape, just hardcoded to param 24 / 3 options since there's only ever
-    // one of these (unlike the LFO shape pickers, which repeat per LFO).
-    function SetFilterType(btn) {
-      const idx = parseInt(btn.dataset.idx);
-      SPVFUI(24, idx / 2);
-      UpdateFilterTypeSelection(idx);
-    }
-
-    function UpdateFilterTypeSelection(idx) {
-      document.querySelector('.filter-type-selector').querySelectorAll('.shape-btn').forEach((btn) => {
-        btn.classList.toggle('selected', parseInt(btn.dataset.idx) === idx);
-      });
-    }
-
     function SetDelayPingPong(isOn) {
       SPVFUI(47, isOn ? 1 : 0);
     }
@@ -2202,11 +2177,6 @@
         return;
       }
 
-      if (param === 24) {
-        UpdateFilterTypeSelection(Math.round(value * 2));
-        return;
-      }
-
       if (param === 47 || param === 51) {
         document.querySelector(`input[data-param-id="${param}"]`).checked = value > 0.5;
         if (param === 51) UpdateLooperGaugeReverse(value > 0.5); // walker animation direction
@@ -2498,19 +2468,12 @@
       <div class="knob-row">
         <div class="knob-container"><knob-control label="Cutoff" param-id="22" units="Hz" shape="log" integer-display></knob-control></div>
         <div class="knob-container"><knob-control label="Q" param-id="23" units="%" shape-exponent="2"></knob-control></div>
-        <!-- 3-way switch, not a knob - LP runs a Moog ladder, BP/HP the
-             original SVF (always 24dB now, see ProcessSamplesAccumulating).
-             Same shape-selector-container/shape-btn pattern the LFO Shape
-             pickers use, reused as-is (its 3-column grid already fits 3
-             buttons exactly). -->
-        <div class="shape-selector-container">
-          <span class="toggle-label">Filter Type</span>
-          <div class="shape-selector filter-type-selector" data-param-id="24">
-            <button class="shape-btn" data-idx="0" title="Low Pass (Moog)" onclick="SetFilterType(this)">LP</button>
-            <button class="shape-btn" data-idx="1" title="Band Pass" onclick="SetFilterType(this)">BP</button>
-            <button class="shape-btn" data-idx="2" title="High Pass" onclick="SetFilterType(this)">HP</button>
-          </div>
-        </div>
+        <!-- 2026-08-16: replaced the old LP/BP/HP 3-way switch (retired, see
+             FirstSynth_DSP.h's mFilterType comment - the Filter is LP-only
+             now) - a fixed highpass stage in series after the Filter, only a
+             cutoff knob (no resonance), in the exact spot the switch used to
+             occupy. -->
+        <div class="knob-container"><knob-control label="HPF Cutoff" param-id="112" units="Hz" shape="log" integer-display></knob-control></div>
         <div class="knob-container"><knob-control label="Key Follow" param-id="55" units="%"></knob-control></div>
         <div class="knob-container"><knob-control label="Env Amount" param-id="26" units="%"></knob-control></div>
       </div>

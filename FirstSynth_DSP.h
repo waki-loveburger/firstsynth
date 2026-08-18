@@ -271,16 +271,6 @@ struct SVFStage
 };
 
 template<typename T>
-inline T BlendFilterOutputs(T low, T band, T high, T filterType)
-{
-  filterType = std::max((T) 0., std::min((T) 2., filterType));
-  if (filterType <= (T) 1.)
-    return low * ((T) 1. - filterType) + band * filterType;
-  T frac = filterType - (T) 1.;
-  return band * ((T) 1. - frac) + high * frac;
-}
-
-template<typename T>
 class IPlugInstrumentDSP
 {
 public:
@@ -400,8 +390,7 @@ public:
 
       if (!isRetrigger)
       {
-        mFilterStage1.Reset();
-        mFilterStage2.Reset();
+        mHPFStage.Reset();
         mMoogOut1 = mMoogOut2 = mMoogOut3 = mMoogOut4 = (T) 0.;
         mMoogIn1 = mMoogIn2 = mMoogIn3 = mMoogIn4 = (T) 0.;
       }
@@ -555,35 +544,28 @@ public:
         // scale as Filter Env Amount above.
         T cutoffHz = mFilterCutoff * std::pow((T) 2., envAmountOctaves * filterEnvVal + inputs[kModFilterLFO][i] + mFilterKeyFollow * (T) pitch + matDest[kMatDstFilterCutoff] * (T) 8.);
         cutoffHz = std::max((T) 20., std::min((T) (mSampleRate * 0.49), cutoffHz));
-        T g = std::tan((T) 3.14159265358979323846 * cutoffHz / (T) mSampleRate);
         // Matrix Filter Resonance destination: additive on the 0-100 normalized
         // resonance scale (matching the knob's own %), +-100 range at +-100% amount,
-        // reclamped before the existing 0.5-20 Q mapping below.
+        // reclamped before ProcessMoogLadder's own 0-1 resonance scale below.
         T qNorm = std::max((T) 0., std::min((T) 100., ((mFilterQ - (T) 0.5) / (T) 19.5) * (T) 100. + matDest[kMatDstFilterResonance] * (T) 100.));
-        // BP/HP only (damp only feeds mFilterStage1/2 below, the Moog LP branch
-        // uses qNorm directly, unaffected by this) - user found the old 0.5-20 Q
-        // range too strong at the top end for BP/HP. kSvfMaxQResonanceScale caps
-        // it at what used to sit around 40% up the knob (0.5 + 0.4*19.5 ~= 8.3),
-        // so 100% now gives that same intensity instead of a near-self-oscillating
-        // Q=20.
-        T modulatedQ = (T) 0.5 + (qNorm / (T) 100.) * (T) 19.5 * kSvfMaxQResonanceScale;
-        T damp = (T) 1. / modulatedQ;
 
-        T filtered;
-        if (mFilterType < (T) 0.5) // LP - Moog ladder (see mFilterType's own comment)
-        {
-          filtered = ProcessMoogLadder(dry, cutoffHz, qNorm / (T) 100.);
-        }
-        else // BP/HP - original SVF, always 24dB now (the Slope toggle was removed)
-        {
-          T low1, band1, high1;
-          mFilterStage1.Process(dry, g, damp, low1, band1, high1);
-          filtered = BlendFilterOutputs<T>(low1, band1, high1, mFilterType);
+        // Smooths out instantaneous cutoff jumps (Random/Square LFO shapes,
+        // stepped Matrix modulation, etc.) before they reach the filter - see
+        // mSmoothedCutoffHz's own comment for why.
+        mSmoothedCutoffHz += (cutoffHz - mSmoothedCutoffHz) * mCutoffSmoothCoeff;
 
-          T low2, band2, high2;
-          mFilterStage2.Process(filtered, g, damp, low2, band2, high2);
-          filtered = BlendFilterOutputs<T>(low2, band2, high2, mFilterType);
-        }
+        // Filter is LP-only now (Moog ladder) - BP/HP retired 2026-08-16, see
+        // mFilterType's own comment.
+        T filtered = ProcessMoogLadder(dry, mSmoothedCutoffHz, qNorm / (T) 100.);
+
+        // Fixed highpass-in-series stage (2026-08-16, replaced selectable BP/HP) -
+        // only a cutoff knob, no resonance control (kHPFDamp is a fixed constant,
+        // not modulatable/user-adjustable, matching the "cutoff knob only" design).
+        T hpfCutoffHz = std::max((T) 20., std::min((T) (mSampleRate * 0.49), mHPFCutoff));
+        T hpfG = std::tan((T) 3.14159265358979323846 * hpfCutoffHz / (T) mSampleRate);
+        T hpfLow, hpfBand, hpfHigh;
+        mHPFStage.Process(filtered, hpfG, kHPFDamp, hpfLow, hpfBand, hpfHigh);
+        filtered = hpfHigh;
 
         // tremolo: bipolar LFO/matrix centered on 1x gain. Matrix Amp Level
         // destination shares the same +-1-at-100%-amount multiplicative convention
@@ -617,6 +599,10 @@ public:
       mFilterEnv.SetSampleRate(sampleRate);
       mModEnv1.SetSampleRate(sampleRate);
       mModEnv2.SetSampleRate(sampleRate);
+      // See mSmoothedCutoffHz's own comment - fixed ~3ms one-pole smoothing
+      // time constant, cached here (once per sample-rate change) rather than
+      // recomputed every sample.
+      mCutoffSmoothCoeff = (T) (1. - std::exp(-1. / (0.003 * sampleRate)));
     }
 
     void SetProgramNumber(int pgm) override
@@ -660,15 +646,19 @@ public:
     T mMixNoise = 0.;
     T mFilterCutoff = 10000.;
     T mFilterQ = 0.7;
-    // 0=LP, 1=BP, 2=HP - discrete choice (InitEnum, see FirstSynth.cpp), not a
-    // continuous blend like this used to be. 0 (LP) runs the Moog ladder below
-    // instead of mFilterStage1/2 - the two aren't blendable against each other
-    // (different topologies entirely), so BP/HP stayed on the original SVF
-    // when LP was swapped out, per explicit user request rather than trying to
-    // preserve the old continuous LP-BP-HP sweep.
+    // Vestigial (2026-08-16) - BP/HP retired entirely, the main Filter is
+    // LP-only now (always the Moog ladder below). Kept storing this value
+    // (still a valid param, see FirstSynth.cpp's kParamFilterType comment) but
+    // nothing reads it anymore - see mHPFStage/mHPFCutoff below for the new
+    // fixed highpass-in-series stage that replaced selectable BP/HP.
     T mFilterType = 0.;
     T mFilterEnvAmount = 0.; // percent, +-100
     T mFilterKeyFollow = 0.; // 0-1 (0-100%), see kParamFilterKeyFollow
+    // Fixed second filter stage in series after the main Filter (2026-08-16,
+    // replaced selectable BP/HP) - just a highpass, only a cutoff knob, no
+    // resonance control (mHPFStage's damp is a fixed constant, see its own
+    // Process() call in ProcessSamplesAccumulating).
+    T mHPFCutoff = 20.;
     T mYuragiRate = 0.; // 0-1 (0-100%), see kParamYuragi - width of per-note random pitch/pan
     T mVelocityCurve = 0.; // -1..1, see kParamVelocityCurve - shapes mVelocity in Trigger()
 
@@ -676,10 +666,33 @@ public:
     T mPhase1 = 0.;
     T mPhase2 = 0.;
     double mSampleRate = 44100.;
-    SVFStage<T> mFilterStage1; // BP/HP only, see mFilterType's comment
-    SVFStage<T> mFilterStage2;
+    // 2026-08-16: user reported big momentary volume spikes when the Filter
+    // LFO's Random or Square shape modulates Cutoff - those shapes jump
+    // instantly between values (no continuous ramp the way Sine/Triangle do),
+    // and feeding a truly instantaneous cutoff jump into ProcessMoogLadder's
+    // strongly nonlinear gain-compensation term (`0.35013*fSq*fSq`, a 4th-power
+    // function of cutoff) can momentarily spike the output before the ladder's
+    // internal state (mMoogOut1-4, tuned to the *old* cutoff) catches up to the
+    // new one - a known characteristic of time-varying resonant filters, not
+    // specific to Random/Square, just most audible with them since every other
+    // LFO shape (and envelopes, Key Follow, Matrix modulation) already changes
+    // cutoff continuously. Fixed with a fast (~3ms) one-pole smoother on the
+    // *final* cutoffHz value (after all modulation sources are summed) right
+    // before it reaches ProcessMoogLadder - short enough to preserve the
+    // audible character of a fast LFO sweep, long enough to turn a true
+    // instant jump into a fast ramp the filter's internal state can track
+    // without a transient. See SetSampleRateAndBlockSize() for
+    // mCutoffSmoothCoeff.
+    T mSmoothedCutoffHz = 10000.;
+    T mCutoffSmoothCoeff = (T) 1.;
+    // Fixed highpass-in-series stage (2026-08-16, replaced selectable BP/HP -
+    // see mFilterType/mHPFCutoff's own comments) - single SVFStage, only its
+    // `high` output is used, with a fixed (not user-controllable) Butterworth
+    // damp for a clean, non-resonant rolloff.
+    SVFStage<T> mHPFStage;
+    static constexpr T kHPFDamp = (T) 1.4142135623730951; // 1/Q, Q=0.7071 (Butterworth)
 
-    // Moog ladder - LP only (mFilterType == 0), ported from Chaoscape's
+    // Moog ladder - the only Filter type now (BP/HP retired 2026-08-16), ported from Chaoscape's
     // ChaoscapeEngine::ProcessMoogLadder (same classic Stilson/Smith-style
     // 4-stage cascade + tanh-saturated resonant feedback), per-voice instead
     // of per-engine since this synth is polyphonic. kMoogResonanceScale
@@ -687,15 +700,34 @@ public:
     // Chaoscape's milder default (Mode 1's 4.2) - user asked for the
     // resonance raised, not just a straight port.
     static constexpr T kMoogResonanceScale = (T) 6.0;
-    // BP/HP resonance range cap - see this constant's own usage/comment in
-    // ProcessSamplesAccumulating for why 0.4 specifically.
-    static constexpr T kSvfMaxQResonanceScale = (T) 0.4;
     T mMoogOut1 = (T) 0., mMoogOut2 = (T) 0., mMoogOut3 = (T) 0., mMoogOut4 = (T) 0.;
     T mMoogIn1 = (T) 0., mMoogIn2 = (T) 0., mMoogIn3 = (T) 0., mMoogIn4 = (T) 0.;
 
     T ProcessMoogLadder(T input, T cutoffHz, T resonance01)
     {
-      T fc = std::max((T) 0., std::min((T) 0.45, cutoffHz / (T) mSampleRate));
+      // Normalized-cutoff mapping - **normalized against Nyquist (sampleRate*0.5),
+      // not the full sample rate** (2026-08-16, superseding the previous 0.45->0.49
+      // clamp adjustment above, which only masked a bigger issue). Verified by the
+      // user with a spectrum analyzer (white noise, Q=0, Cutoff at max): even at
+      // "20000Hz" the signal was already down -12.6dB by 5000Hz and -58dB by
+      // 20000Hz - the filter was nowhere near "open" at its labeled max. Confirmed
+      // numerically (a standalone Python simulation of this exact formula) that
+      // normalizing against the *full* sample rate meant `fc` never got anywhere
+      // near this ladder topology's intended range even at the old clamp's ceiling
+      // - Chaoscape's own port (`ChaoscapeEngine.h`) has the same
+      // sample-rate-normalized convention, so this wasn't a copy-paste slip, just
+      // an inherited miscalibration. Switching to Nyquist normalization (clamp
+      // raised to 0.98, i.e. stopping just short of Nyquist itself for stability)
+      // measured dramatically closer to "actually open at max": -0.9dB by 5000Hz,
+      // -17dB by 20000Hz at the "20000Hz" label, instead of -58dB. Still not a
+      // perfectly accurate Hz label across the whole knob (e.g. "1000Hz" still
+      // measures a real -3dB point closer to ~250-300Hz) - an inherent limit of
+      // this classic Stilson/Smith-style approximation's fixed coefficients
+      // (`1.16`/`0.35013`/`0.3` below), not something a normalization fix alone
+      // can fully correct - but this is a large, verified improvement over the
+      // previous behavior. If instability/self-oscillation is reported at extreme
+      // Cutoff+Resonance settings, 0.98 is the first thing to back off.
+      T fc = std::max((T) 0., std::min((T) 0.98, cutoffHz / ((T) mSampleRate * (T) 0.5)));
       T f = fc * (T) 1.16;
       T fSq = f * f;
       T fb = (resonance01 * kMoogResonanceScale) * ((T) 1. - (T) 0.15 * fSq);
@@ -935,6 +967,11 @@ public:
       case kParamFilterKeyFollow:
         mSynth.ForEachVoice([value](SynthVoice& voice) {
           dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mFilterKeyFollow = (T) value / 100.;
+        });
+        break;
+      case kParamHPFCutoff:
+        mSynth.ForEachVoice([value](SynthVoice& voice) {
+          dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mHPFCutoff = (T) value;
         });
         break;
       case kParamYuragi:

@@ -180,6 +180,12 @@ enum EParams
   // proportional (0, the default) to logarithmic (soft notes disproportionately
   // loud). See FirstSynth_DSP.h's Voice::Trigger() for the actual shaping.
   kParamVelocityCurve,
+  // added 2026-08-16, appended per this project's "never renumber" convention -
+  // a fixed second filter stage in series after the main Filter (always the Moog
+  // LP now, see kParamFilterType's own comment for why BP/HP was retired) - just
+  // a plain highpass with only a cutoff knob, no resonance control. See
+  // FirstSynth_DSP.h's Voice::mHPFCutoff/mHPFStage.
+  kParamHPFCutoff,
   kNumParams
 };
 

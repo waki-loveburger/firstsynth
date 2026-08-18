@@ -5801,3 +5801,206 @@ fully self-contained (Python for the binary parsing, PowerShell+`dbghelp.dll`
 P/Invoke for symbol resolution against the matching PDB) - no WinDbg/cdb
 install needed. Keep `LocalDumps` enabled (already done, user's own machine)
 so any future crash has a `.dmp` ready to go in `C:\CrashDumps`.
+
+## 2026-08-16 — "Single note sounds detuned with Yuragi up" - NOT a FirstSynth bug, diagnosed to BespokeSynth sending duplicate MIDI note-ons
+
+User reported a single held note (Osc2 off) intermittently sounding detuned
+when the Yuragi knob is up. Explained the mechanism from the code
+(`Trigger()` in `FirstSynth_DSP.h` draws a fresh random pitch offset - up to
+±0.6 semitones at 100% - once per note-trigger, identically applied to both
+oscillators, so Yuragi itself can't detune Osc1 against Osc2): the only way a
+single musical note could audibly "detune" is if **two voices are actually
+sounding at once** (legato overlap, sustain pedal, or a duplicate/retriggered
+note-on), each having independently drawn a different random Yuragi offset -
+the slight pitch difference beats like a detuned unison. This matches the
+reported *intermittent* nature (depends on whether an overlap happens to
+occur).
+
+User tested in Standalone (computer-keyboard input, no host in between) and
+confirmed the detune does NOT happen there - **isolated to BespokeSynth**,
+almost certainly BespokeSynth sending a duplicate MIDI note-on for the same
+note (a host/routing issue, not something FirstSynth's code did wrong -
+triggering a new voice on every note-on it receives is correct behavior).
+**No FirstSynth code change needed or made.** If this comes up again, the fix
+(if any) belongs in BespokeSynth's own MIDI routing (duplicate cable/Thru/Echo
+settings, or multiple modules feeding the same channel), not here.
+
+## 2026-08-16 — Moog ladder LP: raised the normalized-cutoff safety clamp 0.45 -> 0.49 (highs still cut at max Cutoff + dead zone near the knob's top)
+
+User reported two things about the Moog-ladder LP filter (swapped in
+2026-08-09): (1) even with Cutoff turned fully right (20000Hz), highs still
+sound slightly rolled off - never truly "open"; (2) the knob's top stretch
+feels disproportionate - turning down just slightly from max closes the
+filter a lot more than expected.
+
+**Both traced to the same line**: `ProcessMoogLadder()`
+(`FirstSynth_DSP.h`) computes `T fc = std::max(0., std::min(0.45, cutoffHz /
+mSampleRate));` - a hard safety ceiling on the ladder's normalized cutoff, at
+`0.45`. At 44.1kHz that's only ~19845Hz, so (1) the filter's real internal
+cutoff was capped below what the knob claimed even at 20000Hz, and (2) every
+Cutoff value from ~19845Hz up to 20000Hz clamps to the *identical* 0.45,
+i.e. that whole top stretch of the knob was a dead zone doing nothing at
+all - turning down past it is what made the filter suddenly start audibly
+closing, reading as "a small movement near the top closes it a lot."
+
+Explained the trade-off (this classic Stilson/Smith-style ladder topology's
+coefficient approximations, ported from Chaoscape, become
+unstable/self-oscillate if this ceiling is raised too close to 0.5/Nyquist)
+and asked the user to choose between a conservative bump (~0.48) or a more
+aggressive one (~0.49, more open but more risk). **User chose the more
+aggressive option.** Changed the clamp to `0.49`. Rebuilt all 3 targets
+(Standalone/CLAP/VST3), all succeeded cleanly.
+
+**User confirmed no stability problems** with the 0.49 clamp. But then raised
+a related, much more concrete complaint: **the Cutoff knob showing "1000Hz"
+sounds almost inaudible**, and raising Resonance around there makes it sound
+like the resonant peak is at ~80Hz, not 1000Hz.
+
+## 2026-08-16 — Moog ladder LP, continued: the *real* bug was normalizing against the full sample rate instead of Nyquist
+
+User provided a spectrum-analyzer screenshot (white noise through the filter,
+Cutoff at max/20000Hz, Q=0) showing the response already down substantially
+by ~5kHz and falling off a cliff well before 20kHz - i.e. **"fully open" was
+nowhere near actually open**. This was a much bigger finding than the earlier
+0.45->0.49 clamp tweak (which only shrank the top-of-knob dead zone without
+fixing the underlying mismatch).
+
+Checked `ChaoscapeEngine.h` (this filter's origin, per its own porting
+comment) - confirmed its `ProcessMoogLadder` uses the exact same
+`fc = cutoffHz / mSampleRate` convention, so this wasn't a copy/paste
+mistake introduced during the port; it's an inherited miscalibration from
+the source project. Chaoscape's own file also had a directly relevant comment
+nearby (about its Mode 4 "click" filter) explaining this exact ladder
+formula's `0.35013*fSq*fSq` gain-compensation term is very sensitive to `fc`
+- useful context, though the actual root cause here turned out to be
+simpler.
+
+**Verified numerically** with a standalone Python simulation of the exact
+formula (run outside the plugin, feeding white noise through the same
+difference equations and measuring the FFT magnitude at several
+frequencies) - confirmed the spectrum-analyzer finding precisely: at
+"cutoff=20000Hz" the simulated filter was already -12.6dB down at 5000Hz and
+-58dB down at 20000Hz. Tried normalizing against **Nyquist**
+(`sampleRate * 0.5`) instead of the full sample rate, with the clamp raised
+to `0.98` (just short of Nyquist) - re-simulated and got dramatically closer
+to genuinely open at max: -0.9dB at 5000Hz, -17dB at 20000Hz, for the same
+"20000Hz" label. Also improved (though didn't perfectly fix) the low/mid
+range: "1000Hz" label's true -3dB point moved from an extremely muffled
+~150-200Hz (old normalization) to a still-low-but-much-better ~250-300Hz.
+Explained plainly to the user that this classic Stilson/Smith-style
+approximation's fixed coefficients (`1.16`/`0.35013`/`0.3`) inherently can't
+be made perfectly 1:1 accurate to the Hz label without a real filter
+redesign - this fix is a large, verified improvement, not a perfect one.
+
+**Fix applied** (`ProcessMoogLadder` in `FirstSynth_DSP.h`): `fc` now computed
+as `cutoffHz / (mSampleRate * 0.5)` (Nyquist-normalized) instead of
+`cutoffHz / mSampleRate`, clamp raised from `0.49` to `0.98` accordingly
+(supersedes the earlier 0.45->0.49 change - same clamp variable, new
+meaning since the denominator changed). Confirmed the *outer* `cutoffHz`
+clamp just above this function (`cutoffHz = max(20., min(mSampleRate*0.49,
+cutoffHz))`) is numerically consistent with the new inner clamp
+(`0.98 * 0.5 * sampleRate == 0.49 * sampleRate` - same ceiling, no conflict).
+Rebuilt all 3 targets, all succeeded cleanly.
+
+**Not yet re-verified live by the user** - next steps: (1) re-check the
+spectrum analyzer at max Cutoff/Q=0 to confirm it now looks genuinely flat/
+open up near 20kHz instead of rolling off from ~2kHz; (2) re-check the
+"1000Hz sounds inaudible" complaint - should be meaningfully better, though
+per the simulation above, don't expect the knob's Hz label to be perfectly
+1:1 accurate anywhere in its range, that's an inherent limit of this filter
+model, not a bug; (3) re-confirm no instability/self-oscillation at extreme
+Cutoff+Resonance now that the effective usable range of `fc` is much wider
+than before (`0.98` vs the old `0.49`, which itself was vs `0.45` - the
+*headroom* before hitting Nyquist changed meaning between these, worth a
+fresh stability check rather than assuming the earlier "no problems" result
+still applies unchanged).
+
+Separately, flagged the same normalization mistake in
+[[project_chaoscape_chainreaction_synths]] (`ChaoscapeEngine.h`'s own
+`ProcessMoogLadder` has the identical `cutoffHz/mSampleRate` convention, per
+the user's request to note it there too) - not fixed there, just recorded.
+Checked GrainField too - it only *mentions* `ProcessMoogLadder` in a comment
+for comparison, doesn't actually have a copy of the function, so nothing to
+flag there.
+
+## 2026-08-16 — Filter Type (LP/BP/HP switch) retired; fixed HPF added in series after the Filter
+
+User request: stop the selectable Filter Type - Filter is LP-only now (the
+Moog ladder). Add a **separate, fixed second filter stage in series after
+it**: a plain highpass with **only a cutoff knob, no resonance/Q control**,
+placed in the UI exactly where the old LP/BP/HP 3-way switch used to be.
+
+**Params** (`FirstSynth.h`): appended `kParamHPFCutoff` at the very end (per
+this project's "never renumber" convention) - param-id 112. `kParamFilterType`
+and `kParamFilterSlope` (already-retired 2026-08-09) are both left registered
+but now fully vestigial/unused, same reasoning as before - deleting them would
+shift every later param's index and break old saved presets/DAW automation
+lanes that might reference them.
+
+**DSP** (`FirstSynth_DSP.h`): removed the `if (mFilterType < 0.5) {...} else
+{...}` branch in `ProcessSamplesAccumulating` - now unconditionally
+`T filtered = ProcessMoogLadder(dry, cutoffHz, qNorm/100.);`. Removed the
+BP/HP-only `mFilterStage1`/`mFilterStage2` `SVFStage` members,
+`kSvfMaxQResonanceScale`, and the now-fully-dead `BlendFilterOutputs()`
+helper (confirmed via grep it had no other callers). Added the new stage:
+a single `SVFStage<T> mHPFStage` member (reusing the existing, proven TPT
+state-variable filter class rather than writing a new filter type from
+scratch), driven by a **fixed** Butterworth damp constant
+(`kHPFDamp = 1/sqrt(2)`, not exposed as a param, matching "cutoff knob only")
+and its own `mHPFCutoff` member (default 20Hz, i.e. the range's own minimum -
+so a preset that never saved a value for this brand-new param starts
+effectively inert rather than silently thinning the bottom end). Applied
+after the Moog ladder's own output, taking just the SVF's `high` output
+(`filtered = hpfHigh;`). Added `case kParamHPFCutoff:` to `SetParam()`.
+`GetParam(kParamHPFCutoff)->InitFrequency("HPF Cutoff", 20., 20., 20000.)` in
+`FirstSynth.cpp`'s constructor, same Hz range/log-shape convention as the
+main Cutoff knob.
+
+**UI** (`resources/web/index.html`): removed the old 3-way switch markup
+(`.filter-type-selector`, its 3 `.shape-btn`s) and its dedicated CSS rule,
+replaced with `<knob-control label="HPF Cutoff" param-id="112" units="Hz"
+shape="log" integer-display>` in the exact same grid slot. Removed
+`SetFilterType()`/`UpdateFilterTypeSelection()` JS functions and the
+`if (param === 24) {...}` special-case branch in `OnParamChange` (param 24 -
+`kParamFilterType` - now has no UI element at all; the generic
+`knob-control[param-id]` fallback safely no-ops on an empty NodeList for it,
+confirmed no JS error risk).
+
+Rebuilt all 3 targets clean (0 errors). Launched Standalone as a smoke test -
+process stayed running, no crash. **User confirmed working**: the HPF Cutoff
+knob shows up in the Filter panel where the old switch was, and it audibly
+removes low end in series after the LP.
+
+## 2026-08-16 — Filter LFO Random/Square shapes causing big momentary volume spikes - fixed with cutoff smoothing
+
+User reported large, momentary volume spikes when the Filter LFO's **Random**
+or **Square** shape modulates Cutoff - not reported for the other (continuous)
+LFO shapes.
+
+**Diagnosis**: Random (sample-and-hold) and Square are the only Filter LFO
+shapes that change value *instantaneously* rather than ramping continuously.
+Feeding a true instant jump in `cutoffHz` into `ProcessMoogLadder()` hits its
+strongly nonlinear gain-compensation term (`0.35013*fSq*fSq`, a 4th power of
+the normalized cutoff) - a sudden large change there, while the ladder's own
+internal state (`mMoogOut1-4`) is still "tuned" to the previous cutoff, can
+produce a momentary transient/spike before the state catches up. This is a
+known general characteristic of time-varying resonant filters, not specific
+to this implementation, just most audible with genuinely discontinuous
+modulation sources.
+
+**Fix**: added a fast (~3ms) one-pole smoother on the *final* summed
+`cutoffHz` (after Env Amount/Filter LFO/Key Follow/Matrix are all combined),
+applied right before it reaches `ProcessMoogLadder` - `mSmoothedCutoffHz`/
+`mCutoffSmoothCoeff` (new `Voice` members in `FirstSynth_DSP.h`), coefficient
+computed once in `SetSampleRateAndBlockSize()` (`1 - exp(-1/(0.003*sampleRate))`),
+applied per-sample in `ProcessSamplesAccumulating` via
+`mSmoothedCutoffHz += (cutoffHz - mSmoothedCutoffHz) * mCutoffSmoothCoeff`.
+3ms is short enough that fast LFO sweeps and other modulation should still
+sound essentially as sharp as before, but long enough to turn a true
+zero-time jump into a fast ramp the filter's state can track without a
+transient. Only applied to the main Filter's cutoff (the new HPF stage
+added earlier this session isn't LFO/Matrix-modulated, so wasn't in scope).
+
+Rebuilt all 3 targets clean (0 errors). **User confirmed improved** -
+Random/Square Filter LFO modulation sounds better, no more report of the
+volume spikes.
