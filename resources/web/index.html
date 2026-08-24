@@ -169,6 +169,49 @@
       color: var(--accent);
     }
 
+    /* Subscription licence gate (eni_auth, 2026-08-24) - full-viewport overlay,
+       toggled by the same style.display idiom SetPage() uses for the page divs
+       below (see UpdateLockScreen()). Deliberately covers .page-header/.preset-bar
+       too rather than hiding them separately, so there is only one thing to keep
+       in sync. */
+    #licence-lock-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+    }
+
+    .licence-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 32px;
+      max-width: 420px;
+      text-align: center;
+    }
+
+    .licence-panel h2 {
+      margin-top: 0;
+    }
+
+    .licence-panel a {
+      color: var(--accent);
+    }
+
+    .licence-code {
+      font-family: monospace;
+      font-size: 20px;
+      letter-spacing: 2px;
+      color: var(--text);
+    }
+
+    #licence-error-text {
+      color: #dc2626;
+    }
+
     /* cross-format preset browser - own row below .page-header, see this element's
        own HTML comment for why it isn't folded into that row instead. */
     .preset-bar {
@@ -2060,6 +2103,23 @@
       });
     }
 
+    // Subscription licence gate (eni_auth, 2026-08-24). Starts optimistically
+    // "licensed" (1) rather than "locked" (0) - kMsgTagLicenceState's first push only
+    // arrives from OnWebContentLoaded() a moment after this script runs, and defaulting
+    // to locked would flash the lock screen on every single launch for an already-
+    // licensed user. Harmless either way: ProcessBlock gates audio independently via
+    // mLicenceValid on the C++ side, not off anything the WebView shows.
+    let licenceState = 1;
+
+    function UpdateLockScreen() {
+      document.getElementById('licence-lock-screen').style.display = (licenceState === 1) ? 'none' : '';
+    }
+
+    function RequestLicenceLogin() {
+      document.getElementById('licence-login-btn').disabled = true;
+      SAMFUI(18 /* kMsgTagLicenceLoginRequest */, 0, 0);
+    }
+
     const kLFOShapeParams = [6, 31, 36, 70, 74]; // Pitch/Filter/Amp/Mod1/Mod2 LFO Shape
     const kLFOSyncParams = [9, 34, 39, 73, 77];  // Pitch/Filter/Amp/Mod1/Mod2 LFO Sync
     const kMatrixEnumParams = [86, 87, 89, 90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 108]; // Matrix Source/Dest <select>s (Amount is a normal knob-control, doesn't need this)
@@ -2305,12 +2365,61 @@
         // characters need real UTF8 decoding to come back out correctly.
         const text = new TextDecoder('utf-8').decode(buf);
         UpdatePresetList(text ? text.split('\n') : []); // "".split('\n') is ['']; not [] - guard for that
+      } else if (msgTag === 17 /* kMsgTagLicenceState */ && dataSize > 0) {
+        licenceState = window.atob(data).charCodeAt(0);
+        UpdateLockScreen();
+      } else if (msgTag === 19 /* kMsgTagLicenceDeviceCode */) {
+        const bytes = window.atob(data);
+        const buf = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+        const [userCode, verificationUri, verificationUriComplete] = new TextDecoder('utf-8').decode(buf).split('\n');
+        document.getElementById('licence-user-code').textContent = userCode;
+        const link = document.getElementById('licence-verification-uri');
+        link.textContent = verificationUri;
+        link.href = verificationUriComplete;
+        document.getElementById('licence-device-code').style.display = '';
+      } else if (msgTag === 20 /* kMsgTagLicenceLoginResult */ && dataSize > 0) {
+        const bytes = window.atob(data);
+        const outcome = bytes.charCodeAt(0);
+        const msgBuf = new Uint8Array(bytes.length - 1);
+        for (let i = 1; i < bytes.length; i++) msgBuf[i - 1] = bytes.charCodeAt(i);
+        const message = new TextDecoder('utf-8').decode(msgBuf);
+
+        document.getElementById('licence-login-btn').disabled = false;
+        const errorEl = document.getElementById('licence-error-text');
+        const signupEl = document.getElementById('licence-signup-link');
+        if (outcome === 0) {
+          errorEl.style.display = 'none';
+          signupEl.style.display = 'none';
+        } else {
+          errorEl.textContent = message;
+          errorEl.style.display = '';
+          signupEl.style.display = (outcome === 2) ? '' : 'none';
+        }
       }
     }
   </script>
 </head>
 <body>
 <div id="dragon-watermark"></div>
+<!-- Subscription licence gate (eni_auth, 2026-08-24) - position:fixed overlay, so DOM
+     order relative to #scroll-container doesn't matter. See UpdateLockScreen(). -->
+<div id="licence-lock-screen" style="display: none;">
+  <div class="licence-panel">
+    <h2>FirstSynth はロック中です</h2>
+    <p id="licence-status-text">ご利用にはサブスクリプションが必要です。</p>
+    <button id="licence-login-btn" class="page-nav-btn" onclick="RequestLicenceLogin()">ブラウザでログイン</button>
+    <div id="licence-device-code" style="display: none;">
+      <p>ブラウザが自動で開かない場合は、こちらを開いてコードを入力してください:</p>
+      <p><a id="licence-verification-uri" href="#" target="_blank" rel="noopener"></a></p>
+      <p id="licence-user-code" class="licence-code"></p>
+    </div>
+    <p id="licence-error-text" style="display: none;"></p>
+    <p id="licence-signup-link" style="display: none;">
+      <a href="https://easyandnicewaki.com/instruments.html" target="_blank" rel="noopener">お申し込みはこちら</a>
+    </p>
+  </div>
+</div>
 <div id="scroll-container">
 <main>
   <div class="page-header">

@@ -9,10 +9,21 @@
 #include <vector>
 #include <string>
 #include <filesystem>
+#include <thread>
 
 FirstSynth::FirstSynth(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
+  // Subscription licence gate (eni_auth, 2026-08-24). Offline/cheap per eni_auth.h's
+  // own contract, safe to call here on the message thread at instantiation - must run
+  // before ProcessBlock ever gets called (a DAW host may call it before any editor
+  // opens), and before any WebView exists (the initial UI push happens later, in
+  // OnWebContentLoaded() - see that function's own comment for why).
+  mLicence = eni::CheckLicence();
+  mLicenceValid.store(mLicence.valid, std::memory_order_relaxed);
+  if (mLicence.valid && eni::ShouldRefresh(mLicence.exp))
+    eni::RefreshInBackground();
+
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
   GetParam(kParamNoteGlideTime)->InitDouble("Note Glide Time", 0., 0., 2000., 0.1, "ms", IParam::kFlagsNone, "", IParam::ShapePowCurve(3.));
   GetParam(kParamAttack)->InitDouble("Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
@@ -216,6 +227,17 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
 #if IPLUG_DSP
 void FirstSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
+  // Subscription licence gate (eni_auth, 2026-08-24). mLicenceValid is set from the
+  // constructor (always runs before this, even in a DAW that never opens the editor)
+  // and re-set from OnIdle() after a successful login - see FirstSynth.h's comment on
+  // why ProcessBlock reads this atomic mirror rather than mLicence.valid directly.
+  if (!mLicenceValid.load(std::memory_order_relaxed))
+  {
+    memset(outputs[0], 0, nFrames * sizeof(sample));
+    memset(outputs[1], 0, nFrames * sizeof(sample));
+    return;
+  }
+
   // mTimeInfo.mTempo is a real host-reported tempo for every other target (CLAP/VST3/
   // AU/AAX/VST2), but the Standalone app has no host transport to report one - it just
   // sits at IPlugStructs.h's DEFAULT_TEMPO (120) forever, regardless of user input.
@@ -518,6 +540,37 @@ void FirstSynth::SaveAutoState()
 
 void FirstSynth::OnIdle()
 {
+  // Subscription licence gate (eni_auth, 2026-08-24) - same dirty-flag-drain idiom as
+  // mLooperStateDirty below: the RunDeviceFlow worker thread (see OnMessage()) never
+  // calls SendArbitraryMsgFromDelegate directly, only sets these flags.
+  if (mLicenceDeviceCodeDirty.exchange(false, std::memory_order_relaxed))
+  {
+    std::string text;
+    { std::lock_guard<std::mutex> lock(mLicenceTextMutex); text = mLicenceDeviceCodeText; }
+    SendArbitraryMsgFromDelegate(kMsgTagLicenceDeviceCode, (int) text.size(), text.data());
+  }
+
+  if (mLicenceResultDirty.exchange(false, std::memory_order_relaxed))
+  {
+    int outcome = mLicenceResultOutcome.load(std::memory_order_relaxed);
+    std::string msg;
+    { std::lock_guard<std::mutex> lock(mLicenceTextMutex); msg = mLicenceResultMessage; }
+
+    std::vector<uint8_t> buf;
+    buf.reserve(1 + msg.size());
+    buf.push_back((uint8_t) outcome);
+    buf.insert(buf.end(), msg.begin(), msg.end());
+    SendArbitraryMsgFromDelegate(kMsgTagLicenceLoginResult, (int) buf.size(), buf.data());
+
+    if (outcome == 0) // success - re-check (message thread, same as the constructor) and unlock
+    {
+      mLicence = eni::CheckLicence();
+      mLicenceValid.store(mLicence.valid, std::memory_order_relaxed);
+      uint8_t stateByte = mLicence.valid ? 1 : 0;
+      SendArbitraryMsgFromDelegate(kMsgTagLicenceState, 1, &stateByte);
+    }
+  }
+
   if (mLooperStateDirty.exchange(false, std::memory_order_relaxed))
   {
     uint8_t stateByte = (uint8_t) mLooper.GetState();
@@ -685,6 +738,40 @@ bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pD
   }
 
 #if IPLUG_DSP
+  // Subscription licence gate (eni_auth, 2026-08-24). RunDeviceFlow() blocks (browser
+  // + polling) and is not self-threading (unlike eni::RefreshInBackground(), called
+  // from the constructor), so this spins its own thread - same .detach()-not-.join()
+  // idiom as RefreshInBackground() itself, the only other threading precedent in this
+  // codebase. Nothing here calls SendArbitraryMsgFromDelegate directly from the worker
+  // thread - results are staged into the dirty-flag members and drained by OnIdle().
+  if (msgTag == kMsgTagLicenceLoginRequest)
+  {
+    if (!mLicenceLoginInFlight.exchange(true, std::memory_order_relaxed))
+    {
+      std::thread([this]()
+      {
+        eni::Error err;
+        const bool ok = eni::RunDeviceFlow(
+          [this](const eni::DeviceCode& dc)
+          {
+            std::lock_guard<std::mutex> lock(mLicenceTextMutex);
+            mLicenceDeviceCodeText = dc.userCode + "\n" + dc.verificationUri + "\n" + dc.verificationUriComplete;
+            mLicenceDeviceCodeDirty.store(true, std::memory_order_relaxed);
+          },
+          err);
+
+        {
+          std::lock_guard<std::mutex> lock(mLicenceTextMutex);
+          mLicenceResultMessage = ok ? std::string() : err.message;
+        }
+        mLicenceResultOutcome.store(ok ? 0 : (err.code == "no_subscription" ? 2 : 1), std::memory_order_relaxed);
+        mLicenceResultDirty.store(true, std::memory_order_relaxed);
+        mLicenceLoginInFlight.store(false, std::memory_order_relaxed);
+      }).detach();
+    }
+    return true;
+  }
+
   if (msgTag == kMsgTagLooperTransport || msgTag == kMsgTagLooperStop || msgTag == kMsgTagLooperClear)
   {
     ELooperState newState;
@@ -891,6 +978,15 @@ void FirstSynth::OnWebContentLoaded()
   // cross-format preset browser (index.html) - not gated on APP_API, works the same
   // in every build, see kMsgTagPresetList's comment in FirstSynth.h
   SendPresetList();
+
+  // Subscription licence gate (eni_auth, 2026-08-24) - not gated on APP_API either,
+  // the lock screen must appear in every plugin format. mLicence was already computed
+  // in the constructor, before any WebView existed; this is the first point it's safe
+  // to call EvaluateJavaScript (same reasoning as LoadAutoState()'s own deferral below).
+  {
+    uint8_t stateByte = mLicence.valid ? 1 : 0;
+    SendArbitraryMsgFromDelegate(kMsgTagLicenceState, 1, &stateByte);
+  }
 
   // the computer-keyboard-as-MIDI-keyboard feature (index.html) is a dev convenience
   // for the standalone app only - a CLAP instance embedded in a host must not hijack

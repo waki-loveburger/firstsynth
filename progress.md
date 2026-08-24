@@ -6004,3 +6004,94 @@ added earlier this session isn't LFO/Matrix-modulated, so wasn't in scope).
 Rebuilt all 3 targets clean (0 errors). **User confirmed improved** -
 Random/Square Filter LFO modulation sounds better, no more report of the
 volume spikes.
+
+## 2026-08-18 — Standalone "abort() has been called" dialog after closing the window - first seen, NOT reproduced, unresolved
+
+User reported a Debug CRT dialog ("Microsoft Visual C++ Runtime Library -
+Debug Error! ... abort() has been called", Abort/Retry/Ignore) appearing
+**after closing** the Standalone window (`FirstSynth_x64.exe`) - not during
+active use. First time seen ("今日初めて見た"), nothing unusual was
+happening right before closing ("特に何もしていなかった").
+
+**Investigated, found nothing**: unlike the earlier Chorus crash this same
+session (which had a proper `0xc0000409` WER event + eventually a full
+minidump), this one left **no trace at all** - no `Get-WinEvent` Application
+log entry (checked both a targeted ID 1000/1001 filter and a broad
+last-30-minutes scan), no new file in `C:\CrashDumps` (LocalDumps is enabled,
+see the earlier Chorus crash entry - didn't catch this one), no WER
+ReportArchive/ReportQueue entry newer than 2026-07-23. `abort()`/SIGABRT
+apparently doesn't reliably route through the same WER unhandled-exception
+capture path a structured exception (like the earlier vector-subscript one)
+does, at least not for however this one was dismissed.
+
+**Tried to reproduce**: launched and closed Standalone (`CloseMainWindow()`
+via PowerShell) 2x in a row - both exited cleanly, no dialog. Not
+reproducible on demand from a simple launch-then-immediately-close sequence.
+
+**Not connected to today's changes as far as can be told** - nothing changed
+today (Moog ladder normalization, Filter Type retirement/HPF, cutoff
+smoothing) touches shutdown/destructor/audio-device-teardown code at all;
+this could be a pre-existing, rare, possibly heap-corruption-triggered issue
+that just happened to surface today, not a regression from today's work.
+This project's own history has at least one earlier mention of a similar
+unexplained pattern (see the 2026-08-09 "Ctrl+S" entry's "same
+unexplained-idle-exit pattern noted in the entry just above").
+
+**Status: unresolved, low-information.** Asked the user to click "再試行"
+(Retry) instead of Abort/Ignore next time it appears - this normally tries
+to attach a JIT debugger, though none is configured on this machine (no
+WinDbg/cdb, see the Chorus crash investigation's own notes on tooling), so it
+may not actually help; otherwise just dismiss with Ignore as before. No
+actionable next step until it reproduces again with more context (what was
+open/in use, whether it's *always* on close or intermittent, any pattern in
+timing).
+
+## 2026-08-24 — eni_auth 購読ライセンスゲートをUI接続、3ターゲットともビルド確認・ロック画面確認済み
+
+伊藤さん(mako)が用意した`eni_auth/`ライブラリ（PR、既にmainへマージ済み・commit
+`1922160`）を、Standalone/CLAP/VST3の3ターゲット全てに接続した。プラン:
+`C:\Users\a_wak\.claude\plans\replicated-launching-book.md`。
+
+**やったこと**（プランの Step 1-10 通り）:
+- `FirstSynth-app/clap/vst3.vcxproj` に `eni_auth/eni_auth.cpp` /
+  `eni_http_win.cpp` / `eni_json.cpp` / `vendor/monocypher/*.c` の5ファイルを
+  `<ClCompile>` に追加。`winhttp.lib`のリンクは`eni_http_win.cpp`自身の
+  `#pragma comment(lib, ...)`任せで、vcxproj側の追加設定は不要だった
+- `FirstSynth.h`: `EMsgTags`に`kMsgTagLicenceState`/`LoginRequest`/
+  `DeviceCode`/`LoginResult`(17-20)を追記。`mLicence`(構造体、非atomic)と
+  `mLicenceValid`(atomic、ProcessBlockが読む唯一のフィールド)を分けて持つ設計
+  - `mLicence`はコンストラクタとログイン成功後の`OnIdle()`の2箇所でしか書かない
+    ことで、非trivial構造体をスレッド間で受け渡す必要をなくした
+- `FirstSynth.cpp`: コンストラクタ先頭で`eni::CheckLicence()`、
+  `ProcessBlock()`先頭で`mLicenceValid`ゲート(無効なら出力を0埋めしてreturn)、
+  `OnMessage()`にログインボタン処理(`RunDeviceFlow()`を`std::thread(...)
+  .detach()`で実行、この既存パターンの唯一の先例は`eni_auth.cpp`自身の
+  `RefreshInBackground()`)、`OnIdle()`にdirty flag経由のUI push、
+  `OnWebContentLoaded()`に初期state push
+- `resources/web/index.html`: `#licence-lock-screen`オーバーレイ
+  (`SetPage()`と同じ`style.display`切替の流儀)、3メッセージタグのJS側配線、
+  `SAMFUI()`でのログインボタン送信
+
+**ビルド時に見つかった実バグ、修正: `eni_auth.cpp`が生のUTF-8日本語文字列
+リテラル(`"有効なサブスクリプションがありません"`等)を含んでおり、この
+プロジェクトの通常のMSVCビルド(コードページ932想定)だとC2001/C2143の構文
+エラーで**コンパイルが通らなかった**。FirstSynth.cpp自身の日本語はコメント
+内だけなので今まで顕在化しなかった問題。`/utf-8`コンパイラオプションを3つの
+vcxprojの全6設定×3ファイル=18箇所の`<ClCompile>`に`AdditionalOptions`として
+追加して解決(ライブラリ自体のファイル内容は一切変更していない)。共有の
+`iPlug2\common-win.props`は触っていない(他プロジェクトへの影響を避けるため、
+FirstSynth固有の3つのvcxprojだけに限定)。
+
+**確認済み**: Standalone/CLAP/VST3の3ターゲットとも警告0・エラー0でビルド成功。
+このマシンには`%APPDATA%\easyandnice\license.json`が存在しないため、
+Standaloneを起動してそのまま「未ライセンス状態」の実地確認になった
+(`PrintWindow`でユーザーの別作業(SunVox)の邪魔にならない形でキャプチャ) -
+ロック画面(「FIRSTSYNTH はロック中です」+ ログインボタン)が
+ヘッダー/プリセットバー/演奏画面ごと正しく覆っていることを確認。
+
+**未確認(ユーザー側での確認が必要)**: ログインボタンのクリック
+(WebView2内のUI Automationがこの環境では効かず、`ブラウザでログイン`
+ボタンが見つからなかった - 過去のセッションでも記録されているWebView2の
+既知の制約と同じ)、実際のDevice Flowログイン完了、CLAPでのREAPER動作確認、
+音声ゲート(ロック中に鍵盤を弾いても無音であること)の実地確認。
+プランファイルの「検証」セクション参照。

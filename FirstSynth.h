@@ -1,7 +1,9 @@
 #pragma once
 
 #include "IPlug_include_in_plug_hdr.h"
+#include "eni_auth/eni_auth.h"
 #include <atomic>
+#include <mutex>
 
 using namespace iplug;
 
@@ -36,7 +38,13 @@ enum EMsgTags
   // added 2026-07-30 (ported from SuiKinKutsu, same day - user request: delete +
   // overwrite-in-place from the GUI) - appended per this project's "never
   // renumber" convention, not inserted among the 3 above.
-  kMsgTagPresetDelete // UI -> C++: UTF8 preset name to delete (see DeletePresetByName())
+  kMsgTagPresetDelete, // UI -> C++: UTF8 preset name to delete (see DeletePresetByName())
+  // Subscription licence gate (eni_auth, 2026-08-24) - appended per this project's
+  // "never renumber" convention.
+  kMsgTagLicenceState, // C++ -> UI: 1 byte (0=locked/unlicensed, 1=licensed). Sent once from OnWebContentLoaded() with the licence state computed at construction, and again from OnIdle() after a successful login.
+  kMsgTagLicenceLoginRequest, // UI -> C++: no data - "log in" button click, starts eni::RunDeviceFlow() on a detached worker thread (see OnMessage())
+  kMsgTagLicenceDeviceCode, // C++ -> UI: UTF8 text "userCode\nverificationUri\nverificationUriComplete", pushed once RunDeviceFlow's onCode callback fires - the fallback code/URL shown while the browser tab is open
+  kMsgTagLicenceLoginResult // C++ -> UI: 1 byte outcome (0=success, 1=failure-generic, 2=failure-no_subscription) followed by UTF8 err.message (already Japanese; empty on success)
 };
 
 enum EParams
@@ -219,6 +227,20 @@ public:
 
 private:
 #if IPLUG_DSP
+  // Subscription licence gate (eni_auth, 2026-08-24). mLicence is only ever written
+  // from the message thread (constructor, or OnIdle() after a successful login) -
+  // ProcessBlock (audio thread) never reads it directly, only mLicenceValid, to
+  // avoid a torn read of this non-atomic struct while OnIdle() reassigns it mid-block.
+  eni::LicenceCheck mLicence;
+  std::atomic<bool> mLicenceValid {false};
+  std::atomic<bool> mLicenceLoginInFlight {false}; // dedupes RunDeviceFlow worker threads against a double button-click
+  std::atomic<bool> mLicenceDeviceCodeDirty {false};
+  std::atomic<bool> mLicenceResultDirty {false};
+  std::atomic<int> mLicenceResultOutcome {0}; // 0=success, 1=failure-generic, 2=failure-no_subscription, see kMsgTagLicenceLoginResult
+  std::mutex mLicenceTextMutex; // guards the two strings below - written on the RunDeviceFlow worker thread, read on OnIdle() (main thread)
+  std::string mLicenceDeviceCodeText;
+  std::string mLicenceResultMessage;
+
   IPlugInstrumentDSP<sample> mDSP {16};
   BassBoostEffect<sample> mBassBoost;
   ChorusEffect<sample> mChorus;
