@@ -1,0 +1,52 @@
+# Builds and runs the licence-check tests on the three platforms the
+# instruments ship on.
+#
+# Scoped to eni_auth/ on purpose: the plug-in itself needs iPlug2 and the
+# platform SDKs, which is a much heavier build than this. The licence code
+# is deliberately independent of the plug-in so it can be verified on its
+# own, cheaply, on every change.
+#
+# Windows matters most here. eni_http_win.cpp talks to WinHTTP and cannot
+# be compiled on a Mac, so without this job that file would only ever be
+# checked when someone builds the installer.
+
+name: eni_auth
+
+on:
+  push:
+    paths:
+      - 'eni_auth/**'
+      - '.github/workflows/eni-auth.yml'
+  pull_request:
+    paths:
+      - 'eni_auth/**'
+      - '.github/workflows/eni-auth.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # one platform failing should not hide the others
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S eni_auth/tests -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # The binary lands in a config subdirectory under MSVC's multi-config
+      # generator and directly in build/ everywhere else.
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: ./build/eni_auth_tests
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: .\build\Release\eni_auth_tests.exe
