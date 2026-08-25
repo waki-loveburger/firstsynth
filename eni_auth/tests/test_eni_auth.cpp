@@ -88,6 +88,14 @@ int64_t Now()
   return int64_t(time(nullptr));
 }
 
+// Some other product of the label - whichever this build is not. Used by the
+// "a licence for a sibling product is rejected" case, which has to work
+// unchanged in every copy of the library.
+const char* SiblingProduct()
+{
+  return strcmp(ENI_PRODUCT, "firstsynth") == 0 ? "suikinkutsu" : "firstsynth";
+}
+
 // --- signing helpers (the tests own a throwaway key pair) -----------------
 
 std::string Base64UrlEncode(const uint8_t* data, size_t len)
@@ -302,7 +310,10 @@ void TestVerification()
 
   TEST("a licence for a sibling product is rejected");
   {
-    const std::string token = MakeToken(ours, "suikinkutsu", future);
+    // A real sibling slug, but never this build's own - the same test file
+    // ships in every product's copy of the library, so naming one product
+    // outright would make the test pass here and fail there.
+    const std::string token = MakeToken(ours, SiblingProduct(), future);
     const eni::LicenceCheck check = eni::VerifyLicence(token, ENI_PRODUCT, 0, ours.publicHex);
     CHECK(check.reason == eni::Reason::kWrongProduct);
     CHECK_EQ(check.exp, future); // still known: the signature was good
