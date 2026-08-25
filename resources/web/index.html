@@ -1232,7 +1232,11 @@
     }
 
     function RestoreUIScale() {
-      const saved = parseInt(localStorage.getItem(kUIScaleStorageKey), 10);
+      // Default to 80% (2026-08-18, was 100%) when nothing's been saved yet -
+      // an explicit saved value (from the user's own Zoom dropdown choice,
+      // including 100%) always wins over this default.
+      const raw = localStorage.getItem(kUIScaleStorageKey);
+      const saved = raw === null ? 80 : parseInt(raw, 10);
       if (saved && saved !== 100) {
         ApplyUIScale(saved);
       }
@@ -1255,7 +1259,12 @@
       ApplyDarkMode(document.documentElement.getAttribute('data-theme') !== 'dark');
     }
 
-    ApplyDarkMode(localStorage.getItem(kDarkModeStorageKey) === '1');
+    // Default to dark (2026-08-18, was light-by-default: `=== '1'` treats an
+    // unset/never-saved preference as light) - matches this project's
+    // existing "default true unless explicitly saved otherwise" convention
+    // used elsewhere (e.g. ApplyPEQLock below). An explicit saved '0'/'1'
+    // from the user's own Dark Mode toggle still always wins either way.
+    ApplyDarkMode(localStorage.getItem(kDarkModeStorageKey) !== '0');
 
     // PEQ Lock - pure WebView display concern, same as Dark Mode (no C++/param side
     // at all - the real param values keep working normally underneath regardless of

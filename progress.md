@@ -6095,3 +6095,129 @@ Standaloneを起動してそのまま「未ライセンス状態」の実地確�
 既知の制約と同じ)、実際のDevice Flowログイン完了、CLAPでのREAPER動作確認、
 音声ゲート(ロック中に鍵盤を弾いても無音であること)の実地確認。
 プランファイルの「検証」セクション参照。
+
+## 2026-08-18 — VST3 editor cropping in real hosts (BespokeSynth) - ROOT CAUSE FOUND AND FIXED, plus two related bugs found along the way
+
+Picked back up the long-paused "editor opens cropped in real VST3 hosts, user
+has to manually drag it bigger every time" issue (last touched 2026-07-30,
+"PLUG_HOST_RESIZE experiment" and "VST3 editor crop/scrollbar investigation"
+entries above), this time reproducing live in **BespokeSynth (VST3)**.
+
+**Root cause, found via a research subagent + live diagnostic logging**:
+`IPlugVST3_View::getSize()` (shared iPlug2 framework code,
+`IPlug/VST3/IPlugVST3_View.h`) returns `GetEditorWidth()/GetEditorHeight()`
+(i.e. `PLUG_WIDTH`/`PLUG_HEIGHT`, currently 1387x780) completely unscaled. Per
+the VST3 spec, `ViewRect` on Windows is *physical* pixels - so on this
+machine's 125%-scaled display, the host was being told "make the window
+1387x780" and building a parent that's *physically* 1387x780, which is only
+~1110x624 in the 96-DPI-equivalent terms the content actually needs. Standalone
+never showed this because it explicitly multiplies by the display scale itself
+(`IPlugAPP_dialog.cpp`'s `ClientResize`) before ever sizing its own window -
+VST3's `getSize()` path had no equivalent.
+
+**First fix attempt (reverted)**: tried returning `kResultFalse` from
+`setContentScaleFactor()` (telling the host "I don't handle scaling, please
+scale for me"). Symptom changed but didn't resolve: the window would flash to
+the correct larger size then immediately snap back small. Added temporary
+diagnostic logging (`%TEMP%\vst3_size_debug.log`, same convention as the
+2026-07-30 investigation) at every relevant call site
+(`setContentScaleFactor`/`getSize`/`attached`/`onSize`/`SetWebViewBounds`/the
+async WebView2-controller-created callback) and got a full, timestamped trace
+of BespokeSynth's actual sequence. It proved the *opposite* of the working
+theory: BespokeSynth doesn't scale `getSize()`'s value itself at all - it just
+uses whatever `getSize()` returns *directly* as the target window size, once
+it's finished processing `setContentScaleFactor`. So `kResultFalse` was wrong;
+reverted to `kResultOk`.
+
+**Real fix**: `WebViewEditorDelegate::SetScreenScale()` (`IPlug/Extras/WebView/
+IPlugWebViewEditorDelegate.h`) was the base `IEditorDelegate`'s no-op default -
+added a real override that captures the *un-scaled* base size once (from
+whatever `GetEditorWidth()/GetEditorHeight()` held before any scaling, i.e.
+the raw `PLUG_WIDTH`/`PLUG_HEIGHT`) and calls `SetEditorSize(baseW*scale,
+baseH*scale)` every time the host reports a scale factor - added a
+`GetScreenScale()` getter alongside it. Confirmed via the same diagnostic
+logging that the *next* `getSize()` call (BespokeSynth re-queries it right
+after each `setContentScaleFactor`) then returned the correctly-scaled
+1734x975, and the window settled there - **the original cropping bug is
+fixed**.
+
+**Second bug found while verifying**: after the fix, opening at the correct
+size worked, but manually toggling the WebView's own "Zoom" dropdown to 100%
+expanded the window yet still didn't show the full GUI ("拡大しますが、GUI
+全部は見えません"). Cause: `FirstSynth.cpp`'s `kMsgTagSetUIScale` handler
+computed its resize target from the *raw* `PLUG_WIDTH`/`PLUG_HEIGHT` macros
+(`newW = round(PLUG_WIDTH * scalePercent/100)`), with no DPI awareness at
+all - a second, independent path to the same root problem. Fixed by
+multiplying through the new `GetScreenScale()` too:
+`newW = round(PLUG_WIDTH * GetScreenScale() * scalePercent/100)`. This
+project-specific handler likely has twins in SuiKinKutsu/GrainField/Compost
+(same UI-zoom-feature pattern) - not checked/fixed there yet.
+
+**Third bug found while verifying** (unrelated to DPI, a real separate
+finding): after both fixes above, the editor still visually "shrank" on
+open - traced to the WebView's own **UI Zoom localStorage value reading 80%**
+that the user never set for BespokeSynth. Root cause: `IPlugPaths.cpp`'s
+`WebViewCachePath()` (**shared framework code**) returned a single **hard-
+coded path**, `%APPDATA%\iPlug2\WebViewCache`, used as WebView2's user-data-
+folder (and therefore its `localStorage`/cookie store) by *every* iPlug2
+WebView plugin, in *every host*, on the whole machine - confirmed live: an
+80% Zoom set earlier this session while debugging FirstSynth in **Studio
+One** had bled into this completely separate **BespokeSynth** session, purely
+because both happened to load a WebView2 environment under the same shared
+folder. Fixed by namespacing the path with `BUNDLE_NAME` (per-project
+config.h macro - separates *products*, e.g. FirstSynth vs. SuiKinKutsu) and
+the current process's own executable name via `GetModuleFileNameA(nullptr,
+...)` (separates *hosts*, e.g. Studio One vs. BespokeSynth vs. Standalone vs.
+REAPER) - `%APPDATA%\iPlug2\WebViewCache\<BUNDLE_NAME>\<hostExeName>`. Needed
+`#include "config.h"` added to `IPlugPaths.cpp` (same pattern already used by
+`IPlugAPP_dialog.cpp`/`IPlugAPP_main.cpp` for the same reason). This is a
+**real, previously-undiagnosed bug affecting every iPlug2 WebView-based
+project on this machine**, not just today's symptom - SuiKinKutsu, GrainField,
+Compost, Chaoscape (if WebView-based) all share this same framework file and
+would all need rebuilding to pick up the fix. Side effect (expected, harmless,
+not migrated): every existing saved WebView preference (Zoom, Dark Mode, PEQ
+Lock, etc.) for every project/host combo resets to defaults once, the first
+time each is rebuilt against this fix, since the old shared cache folder is
+simply no longer read.
+
+**Two default changes, per explicit user request** (`resources/web/index.html`):
+- Dark Mode now defaults to dark when nothing's saved yet (was light) -
+  `localStorage.getItem(kDarkModeStorageKey) !== '0'` instead of `=== '1'`.
+- UI Zoom now defaults to 80% when nothing's saved yet (was 100%) -
+  `RestoreUIScale()` treats an unset value as 80 instead of doing nothing.
+Both still fully respect an explicit saved preference either way - these only
+change what happens on a genuinely first-ever launch (or, incidentally, right
+after the cache-path fix above resets everyone once).
+
+**Diagnostic logging fully removed** after root-causing (`LogVstSize` in
+`IPlugWebView_win.cpp`, `LogVstViewSize` in `IPlugVST3_View.h`, and their
+call sites) - was explicitly temporary, matching the 2026-07-30
+investigation's own convention.
+
+**Files touched, all shared iPlug2 framework code except the one noted**:
+`IPlug/VST3/IPlugVST3_View.h`, `IPlug/Extras/WebView/
+IPlugWebViewEditorDelegate.h`, `IPlug/Extras/WebView/IPlugWebView_win.cpp`,
+`IPlug/IPlugPaths.cpp`, and `FirstSynth.cpp` (project-specific: the
+`kMsgTagSetUIScale` handler fix) + `resources/web/index.html` (project-
+specific: the two default changes).
+
+**Confirmed working end-to-end by the user** in BespokeSynth (VST3): editor
+opens at the correct size with no manual resize needed, in Dark mode, at 80%
+Zoom, first try, no leftover cropping. Rebuilt and reconfirmed with the
+diagnostic logging removed. Standalone/CLAP were rebuilt too (share the
+touched framework files) but not yet independently re-verified live - should
+be low-risk (same code paths, scale=1.0 no-ops correctly through all of this
+on a 100%-scale target, and Standalone already had its own correct DPI
+handling that this doesn't change).
+
+**Not yet done**: confirmed via `find` that Chaoscape/SuiKinKutsu/GrainField/
+GrainKit(Compost)/UeberLooper have no `iPlug2` folder of their own - they all
+reference this exact same shared checkout (`C:\Users\a_wak\CLAP_plugin\
+iPlug2`) via relative paths, same as FirstSynth. So the 3 shared-framework
+fixes above (getSize DPI scaling, SetScreenScale/GetScreenScale,
+WebViewCachePath namespacing) already apply to all of them automatically -
+**just rebuilding each project picks up the fix, no porting needed**. Still
+worth doing (and checking each project's own UI-zoom-feature code, if any,
+for the same `kMsgTagSetUIScale`-style raw-PLUG_WIDTH pattern FirstSynth had)
+next time any of them is worked on - not done proactively this session since
+it wasn't asked for.

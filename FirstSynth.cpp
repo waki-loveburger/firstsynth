@@ -731,8 +731,23 @@ bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pD
   if (msgTag == kMsgTagSetUIScale)
   {
     const int scalePercent = ctrlTag;
-    const int newW = static_cast<int>(std::round(PLUG_WIDTH * scalePercent / 100.0));
-    const int newH = static_cast<int>(std::round(PLUG_HEIGHT * scalePercent / 100.0));
+    // 2026-08-18: was PLUG_WIDTH/PLUG_HEIGHT (raw, un-DPI-scaled) - fixed
+    // alongside the "editor opens cropped in real VST3 hosts" bug (see
+    // WebViewEditorDelegate::SetScreenScale()'s own comment for the full
+    // story). Resize()/EditorResizeFromUI() asks the HOST to resize the
+    // parent window to exactly the width/height given here - on a >100%
+    // scaled display, the un-scaled PLUG_WIDTH/HEIGHT value is smaller than
+    // the real physical size the content needs, so the window would resize
+    // but still not be big enough to show everything (confirmed: "拡大しま
+    // すが、GUI全部は見えません" after this Zoom feature ran at 100%, right
+    // after the getSize()-side fix alone had already made the *initial* open
+    // size correct - proving this is a second, separate call path needing
+    // the same DPI-awareness). GetScreenScale() is 1.0 until the host's
+    // first setContentScaleFactor() call lands, so this is a no-op change
+    // for hosts/situations that never report a scale.
+    const double dpiScale = (double) GetScreenScale();
+    const int newW = static_cast<int>(std::round(PLUG_WIDTH * dpiScale * scalePercent / 100.0));
+    const int newH = static_cast<int>(std::round(PLUG_HEIGHT * dpiScale * scalePercent / 100.0));
     Resize(newW, newH);
     return true;
   }
