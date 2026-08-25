@@ -20,14 +20,15 @@
 
 // Licence server and Auth0 tenant.
 #define ENI_API_BASE "https://api.easyandnicewaki.com"
-#define ENI_AUTH0_DOMAIN "easyandnice.jp.auth0.com"
+#define ENI_AUTH0_DOMAIN "auth.easyandnicewaki.com"
 #define ENI_AUTH0_AUDIENCE "https://api.easyandnicewaki.com"
 
-// Auth0 native application "easy and nice instruments (native)", created
-// 2026-08-22 with the device-code grant only. A public client: this ID is
-// meant to be embedded, and on its own it can do nothing without a human
-// approving the request in a browser.
-#define ENI_AUTH0_CLIENT_ID "bTqsvSVduO2zK1JT631N44odj2pPrbi1"
+// Auth0 native application "easy and nice instruments (native)", with the
+// device-code grant only. A public client: this ID is meant to be embedded,
+// and on its own it can do nothing without a human approving the request in
+// a browser. Reissued 2026-08-26 when the tenant moved - client IDs belong
+// to a tenant and cannot be carried across.
+#define ENI_AUTH0_CLIENT_ID "DY9cVRzbMZBojmRRLtMOjO1rY88hdWDi"
 
 // Ed25519 public key (raw 32 bytes, hex) that licences are signed with.
 // The private half exists only in 1Password and as a Cloudflare Workers

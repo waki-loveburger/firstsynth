@@ -453,8 +453,8 @@ void TestProtocol()
   {
     StubTransport(200,
       "{\"device_code\":\"dc-123\",\"user_code\":\"ABCD-EFGH\","
-      "\"verification_uri\":\"https://easyandnice.jp.auth0.com/activate\","
-      "\"verification_uri_complete\":\"https://easyandnice.jp.auth0.com/activate?user_code=ABCD-EFGH\","
+      "\"verification_uri\":\"https://auth.easyandnicewaki.com/activate\","
+      "\"verification_uri_complete\":\"https://auth.easyandnicewaki.com/activate?user_code=ABCD-EFGH\","
       "\"interval\":5,\"expires_in\":900}");
 
     eni::DeviceCode dc;
