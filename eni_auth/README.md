@@ -41,11 +41,20 @@ eni_auth/vendor/monocypher/monocypher.c
 eni_auth/vendor/monocypher/monocypher-ed25519.c
 ```
 
-プラットフォーム外のファイルは中身が丸ごと `#if` で消えるので、
-全部をビルド対象に入れて構いません（ビルド設定の分岐が不要になります）。
+`.cpp` の 3 つは中身が丸ごと `#if` で消えるので、全部をビルド対象に入れて
+構いません。**`eni_http_mac.mm` だけは macOS 限定にしてください** —
+Objective-C++ なので、ObjC++ を持たないコンパイラは `#if` に到達する前に
+ファイル自体で失敗します（Linux ビルドで実際に踏みました）。
 
 リンクするもの: Windows は `winhttp.lib`、macOS は `Foundation`
 フレームワーク。それ以外に依存はありません。
+
+> ⚠️ **MSVC では `/utf-8` を必ず付けてください。**
+> このライブラリの利用者向けメッセージは日本語なので、ソースは UTF-8 です。
+> MSVC は既定でマシンの ANSI コードページとして読むため、**日本語ロケール
+> (CP932) の PC では構文エラーになります**（FirstSynth の初回 Windows ビルドで
+> 実際に発生。3 つの `.vcxproj` の `AdditionalOptions` に `/utf-8` を追加して解決）。
+> CI では検出できません（CP1252 のランナーでは何事もなく通るため）。
 
 ### 2. プラグイン本体から呼ぶ
 
