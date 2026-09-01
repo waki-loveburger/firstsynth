@@ -7380,8 +7380,12 @@ byte-for-byte identical in result (every param gets overwritten anyway); short
 default (0 for Osc Drift). `UnserializeParams`' own `OnParamReset(kPresetRecall)`
 still fans the final values out to the DSP; `OnRestoreState()` still does the UI.
 This also future-proofs the next appended param. Verified: builds clean;
-standalone relaunches fine (screenshot). NOTE: this session's VST3 postbuild
-*install-copy* to `C:\Program Files\Common Files\VST3\` failed (code 4) purely
-because BespokeSynth was open with the plugin loaded (locks the target) - the
-VST3 *binary* compiled/linked fine; Standalone + CLAP copied fine. Close the
-host and rebuild `FirstSynth-vst3` to refresh the installed VST3.
+standalone relaunches fine (screenshot).
+
+**Band-limiting + Osc Drift confirmed adopted by the user (2026-09-01).** After
+evaluating in Standalone the user said keep both. Rebuilt all real targets
+(app/vst3/clap, Debug) once BespokeSynth was closed - the installed VST3 at
+`C:\Program Files\Common Files\VST3\` and CLAP at `...\Programs\Common\CLAP\`
+are now refreshed with everything from this session (earlier the VST3
+install-copy had failed code 4 purely because BespokeSynth held the target file
+open - binary itself always compiled fine).
