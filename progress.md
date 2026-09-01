@@ -7346,8 +7346,17 @@ standalone launches, PrintWindow screenshot confirms the "Osc Drift" knob shows
 next to Bend Range and no phase dropdown remains. Not yet A/B'd by ear.
 
 **Related idea parked** (user mentioned, not implemented): bx_oberhausen's
-"Spread" - makes a single oscillator act like a stereo oscillator. Almost
-certainly two copies of the osc with a tiny fixed frequency/phase offset panned
-hard L/R (a sub-Hz offset gives a slowly rotating stereo field; mono-sum beats
-slowly rather than static comb notches). Close cousin of unison, which the user
-put on hold.
+"Spread" - makes a single oscillator act like a stereo oscillator. User
+corrected the first guess: there is **no L/R pitch difference and no beating**,
+so it is NOT a detune/frequency-offset. It's a pure *phase* relationship - L and
+R are the same oscillator at the same frequency, offset only in phase, and the
+width comes from interaural phase decorrelation (no Δf ⇒ no beat by definition).
+A plain fixed phase offset would comb-filter the mono sum (each harmonic n
+scaled by cos(n·θ/2)); the fact that Oberhausen's Spread stays roughly
+mono-neutral points to a **90°/quadrature (Hilbert) decorrelation** - R = the
+oscillator's cosine/quadrature version, so mono-sum scales every partial by a
+uniform cos(45°)≈0.707 (just ~-3 dB, no comb). If implemented here: evaluate the
+osc twice per voice (`Morph(phase)` + a quadrature partner), and to keep the
+width past the filter the Moog ladder would have to run L/R separately (the
+expensive part) - or accept mono-after-filter. Lighter than unison (which is on
+hold).
