@@ -368,17 +368,15 @@ public:
   {
   public:
     Voice()
-    : mAMPEnv("gain", [&](){
-#ifdef _DEBUG
-        if (mFixedPhase)
-#endif
-          mPhase1 = mPhase2 = 0.;
-      }) // capture ok on RT thread?
+    : mAMPEnv("gain", [&](){ mPhase1 = mPhase2 = 0.; }) // capture ok on RT thread?
     , mRandSeed((uint32_t) (uintptr_t) this) // unique-ish per-voice seed so pooled voices don't draw identical Yuragi/noise sequences
     {
 //      DBGMSG("new Voice: %i control inputs.\n", static_cast<int>(mInputs.size()));
       mAMPEnv.SetAttackShape(2.); // ease-in attack (was a linear ramp) - softens the onset transient
       mFilterEnv.SetAttackShape(2.); // same treatment, on trial - softens the cutoff sweep's onset too
+      // decorrelate each pooled voice's (and each oscillator's) Osc Drift phase
+      mDriftPhA1 = Rand() * 0.5 + 0.5; mDriftPhB1 = Rand() * 0.5 + 0.5;
+      mDriftPhA2 = Rand() * 0.5 + 0.5; mDriftPhB2 = Rand() * 0.5 + 0.5;
     }
 
     bool GetBusy() const override
@@ -388,10 +386,7 @@ public:
 
     void Trigger(double level, bool isRetrigger) override
     {
-#ifdef _DEBUG
-      if (mFixedPhase)
-#endif
-        mPhase1 = mPhase2 = 0.;
+      mPhase1 = mPhase2 = 0.; // oscillator phase always restarts at 0 on note-on
 
       // Key velocity removed for now (user request) - every note triggers at full
       // envelope depth (1.) regardless of the incoming MIDI velocity's `level`
@@ -558,9 +553,32 @@ public:
         else if (mMatrixDest[s] == kMatDstOsc2PitchFine) matOsc2PitchFineOct += contribution * kSemitoneOctaves;
       }
 
+      // Osc Drift (2026-09-01, kParamOscDrift): a slow, bounded, per-oscillator
+      // pitch wander for analog-style "movement" - two incommensurate slow sines
+      // summed per oscillator (smooth, bounded, and block-size/sample-rate
+      // independent, unlike a per-block random walk). Osc1 and Osc2 use
+      // different rates, so with both oscillators up the patch slowly beats and
+      // thickens even though this synth has no unison. Evaluated once per block
+      // (the wander is far slower than a block, so per-sample would be wasted
+      // work); phases free-run and are seeded per-voice in the ctor.
+      double drift1Oct = 0., drift2Oct = 0.;
+      if (mOscDrift > (T) 0.)
+      {
+        const double kTwoPi = 6.283185307179586;
+        const double kDriftMaxOct = 12.0 / 1200.0; // peak +-12 cents at 100%
+        double adv = (double) nFrames / mSampleRate;
+        mDriftPhA1 += 0.11 * adv; mDriftPhA1 -= std::floor(mDriftPhA1);
+        mDriftPhB1 += 0.17 * adv; mDriftPhB1 -= std::floor(mDriftPhB1);
+        mDriftPhA2 += 0.13 * adv; mDriftPhA2 -= std::floor(mDriftPhA2);
+        mDriftPhB2 += 0.19 * adv; mDriftPhB2 -= std::floor(mDriftPhB2);
+        double d = (double) mOscDrift * kDriftMaxOct * 0.5;
+        drift1Oct = d * (std::sin(kTwoPi * mDriftPhA1) + std::sin(kTwoPi * mDriftPhB1));
+        drift2Oct = d * (std::sin(kTwoPi * mDriftPhA2) + std::sin(kTwoPi * mDriftPhB2));
+      }
+
       // convert from "1v/oct" pitch space to frequency in Hertz
-      double osc1Freq = 440. * pow(2., pitch + pitchBend + inputs[kModPitchLFO][0] + mTuneOctaves1 + mYuragiPitchOffsetOctaves + matOsc1PitchOct + matOsc1PitchFineOct);
-      double osc2Freq = 440. * pow(2., pitch + pitchBend + inputs[kModPitchLFO][0] + mTuneOctaves2 + mYuragiPitchOffsetOctaves + matOsc2PitchOct + matOsc2PitchFineOct);
+      double osc1Freq = 440. * pow(2., pitch + pitchBend + inputs[kModPitchLFO][0] + mTuneOctaves1 + mYuragiPitchOffsetOctaves + matOsc1PitchOct + matOsc1PitchFineOct + drift1Oct);
+      double osc2Freq = 440. * pow(2., pitch + pitchBend + inputs[kModPitchLFO][0] + mTuneOctaves2 + mYuragiPitchOffsetOctaves + matOsc2PitchOct + matOsc2PitchFineOct + drift2Oct);
       double phaseInc1 = osc1Freq / mSampleRate;
       double phaseInc2 = osc2Freq / mSampleRate;
 
@@ -762,17 +780,14 @@ public:
     T mHPFCutoff = 20.;
     T mYuragiRate = 0.; // 0-1 (0-100%), see kParamYuragi - width of per-note random pitch/pan
     T mVelocityCurve = 0.; // -1..1, see kParamVelocityCurve - shapes mVelocity in Trigger()
-#ifdef _DEBUG
-    // 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's
-    // own comment in FirstSynth.h. true (default) = existing behavior, phase
-    // reset to 0 on every note-on/retrigger (both sites below, mPhase1/mPhase2
-    // are private so this flag must live up here to stay settable from
-    // SetOscPhaseMode()'s ForEachVoice, same as mMatrixSource etc. above).
-    // false = free-running, phase carries over from wherever this pooled
-    // voice's oscillator last left off, matching typical free-run analog
-    // oscillator behavior.
-    bool mFixedPhase = true;
-#endif
+    // Osc Drift (2026-09-01, kParamOscDrift) - depth 0-1 of a slow, bounded,
+    // per-oscillator pitch wander. mDriftPh* are free-running phase accumulators
+    // for two incommensurate slow sines per oscillator (osc1 uses A1/B1, osc2
+    // uses A2/B2 at different rates), seeded per-voice in the ctor so pooled
+    // voices don't drift in lockstep. Applied per block in
+    // ProcessSamplesAccumulating; never reset on Trigger.
+    T mOscDrift = 0.;
+    double mDriftPhA1 = 0., mDriftPhB1 = 0., mDriftPhA2 = 0., mDriftPhB2 = 0.;
 
   private:
     T mPhase1 = 0.;
@@ -947,18 +962,6 @@ public:
     mSynth.AddMidiMsgToQueue(msg);
   }
 
-#ifdef _DEBUG
-  // 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's own
-  // comment in FirstSynth.h. Broadcasts to every pooled voice's mFixedPhase,
-  // same ForEachVoice pattern SetParam() below uses for other per-voice state.
-  void SetOscPhaseMode(bool fixed)
-  {
-    mSynth.ForEachVoice([fixed](SynthVoice& voice) {
-      dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mFixedPhase = fixed;
-    });
-  }
-#endif
-
   void SetParam(int paramIdx, double value)
   {
     using EEnvStage = ADSREnvelope<sample>::EStage;
@@ -1106,6 +1109,11 @@ public:
       case kParamVelocityCurve:
         mSynth.ForEachVoice([value](SynthVoice& voice) {
           dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mVelocityCurve = (T) value / 100.;
+        });
+        break;
+      case kParamOscDrift:
+        mSynth.ForEachVoice([value](SynthVoice& voice) {
+          dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mOscDrift = (T) value / 100.;
         });
         break;
       case kParamFilterSustain:

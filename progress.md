@@ -7296,16 +7296,58 @@ hash); `mFixedPhase=true` phase-locking every note-on; no osc drift/detune.
   if the user still wants more after listening.
 
 **Not done / open:** user hasn't A/B'd by ear yet in a host. If still too bright,
-next levers (in order): flip `mFixedPhase` to free-run (dev switch already there),
-re-check Moog Hz calibration, add gentle osc drift, then consider oversampling.
+next levers (in order): ~~phase free-run~~ (tried + removed, see the 2026-09-01
+entry below - inaudible here), Osc Drift (added 2026-09-01), re-check Moog Hz
+calibration, unison (on hold), then consider oversampling / minBLEP.
 
 ## Before release - open TODO (2026-09-01)
 
 Not blocking, but must not ship without these (user's call, noted here so it
 isn't forgotten):
-- **Factory-preset switch**: currently a plain always-visible control used while
+- **Factory-preset switch**: currently a plain always-visible control (the
+  `#ifdef _DEBUG` ★ Factory button, revealed by `SetDevBuild(true)`) used while
   developing with a mixed pool of finished + WIP presets in one folder. Give it
   a dev-only / clearly-temporary look (or gate it) before release.
-- **Phase-free (`kMsgTagSetOscPhaseMode` / `mFixedPhase`) switch**: still a
-  `#ifdef _DEBUG` dev A/B selector under evaluation. Decide its final form
-  (drop it, or promote to a real param with proper UI) before release.
+- ~~Phase-free switch~~ - resolved 2026-09-01: the dev A/B toggle was **removed**
+  entirely (user confirmed the fixed/free difference is inaudible in this synth -
+  phase 0 is a zero crossing for the Morph waveforms and there's no unison to
+  make it matter). Phase now always resets to 0 on note-on, as before the toggle.
+
+## Phase-mode dev switch removed; Osc Drift param added (2026-09-01)
+
+Follow-up to the band-limiting work. User A/B'd the `#ifdef _DEBUG` fixed/free
+oscillator-phase toggle "何度も" and still couldn't hear a difference, unlike
+Sylenth1's equivalent. Reason it's a non-lever *here*: FirstSynth resets phase
+to **0**, which the Morph waveforms are deliberately built to make a zero
+crossing (no onset step/click), and there's no unison stacking to turn phase
+relationships into audible comb/width effects the way Sylenth1's does.
+
+**Removed** (`kMsgTagSetOscPhaseMode` / `mFixedPhase` / `mOscPhaseFixed` /
+`SetOscPhaseMode` / `oscPhaseModeSelect` + its two JS fns + the
+`OnWebContentLoaded` display re-push), same "never persisted anywhere, safe to
+delete outright" reasoning as the Env Time Curve tool removal (2026-08-26).
+`kMsgTagSetOscPhaseMode` was the last `EMsgTags` entry so nothing renumbered.
+Phase-reset-to-0-on-note-on is now unconditional (Voice ctor `mAMPEnv` resetFunc
++ `Trigger()`), exactly the pre-toggle behavior.
+
+**Added `kParamOscDrift`** ("Osc Drift", param id 116, appended per never-
+renumber; knob placed right of Bend Range in the Mixer area, `shape-exponent=2`,
+0-100%, **default 0** = no change to existing presets). Per-voice, per-oscillator
+slow analog-style pitch wander: two incommensurate slow sines summed per osc
+(osc1 rates 0.11/0.17 Hz, osc2 0.13/0.19 Hz - different so a 2-osc patch slowly
+beats/thickens *without* needing unison), peak +-12 cents at 100%. Evaluated
+once per block in `ProcessSamplesAccumulating` (wander >> block length), added
+into the `osc1Freq`/`osc2Freq` `pow(2, ...)` exponent. Phase accumulators
+free-run, seeded per-voice from `Rand()` in the ctor so pooled voices don't
+drift in lockstep; never reset on Trigger.
+
+**Verified**: app/vst3/clap x Debug/Release x64 all 0 errors / 0 warnings;
+standalone launches, PrintWindow screenshot confirms the "Osc Drift" knob shows
+next to Bend Range and no phase dropdown remains. Not yet A/B'd by ear.
+
+**Related idea parked** (user mentioned, not implemented): bx_oberhausen's
+"Spread" - makes a single oscillator act like a stereo oscillator. Almost
+certainly two copies of the osc with a tiny fixed frequency/phase offset panned
+hard L/R (a sub-Hz offset gives a slowly rotating stereo field; mono-sum beats
+slowly rather than static comb notches). Close cousin of unison, which the user
+put on hold.

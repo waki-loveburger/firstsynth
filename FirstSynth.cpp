@@ -222,6 +222,11 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   // (leaning toward exponential) per user's own tuning, after confirming the
   // knob's full range worked correctly.
   GetParam(kParamVelocityCurve)->InitDouble("Velocity Curve", -37.6, -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
+  // 2026-09-01: slow per-oscillator analog-style pitch drift, depth only (rate
+  // is fixed, like Yuragi). 0 = off. Osc1 and Osc2 drift independently and at
+  // different rates, so a 2-osc patch slowly thickens/beats even without a
+  // unison feature. See FirstSynth_DSP.h's Voice for the actual wander math.
+  GetParam(kParamOscDrift)->InitDouble("Osc Drift", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "MIX");
 
 #ifdef WEBVIEW_EDITOR_DELEGATE
   SetEnableDevTools(true);
@@ -1090,14 +1095,6 @@ bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pD
     return true;
   }
 
-#ifdef _DEBUG
-  if (msgTag == kMsgTagSetOscPhaseMode)
-  {
-    SetOscPhaseMode(ctrlTag != 0);
-    return true;
-  }
-#endif
-
 #ifdef APP_API
   if (msgTag == kMsgTagSetStandaloneTempo && dataSize >= 4)
   {
@@ -1112,18 +1109,6 @@ bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pD
 
   return false;
 }
-
-#ifdef _DEBUG
-// 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's own
-// comment in the EMsgTags enum. Just forwards to the DSP's own ForEachVoice
-// broadcast (FirstSynth_DSP.h) - mOscPhaseFixed here only exists to mirror the
-// current state back if ever needed.
-void FirstSynth::SetOscPhaseMode(bool fixed)
-{
-  mOscPhaseFixed = fixed;
-  mDSP.SetOscPhaseMode(fixed);
-}
-#endif
 
 void FirstSynth::OnParamChange(int paramIdx)
 {
@@ -1249,17 +1234,6 @@ void FirstSynth::OnWebContentLoaded()
   // the only thing that ever reveals it, and only in a Debug build.
 #ifdef _DEBUG
   EvaluateJavaScript("if (typeof SetDevBuild === 'function') { SetDevBuild(true); }");
-  // The Osc Phase Mode dev tool keeps its real current state in a plain C++
-  // member (mOscPhaseFixed) that's untouched by a GUI close/reopen - only the
-  // WebView itself gets torn down and recreated, so its HTML always restarts
-  // showing the <select>'s hardcoded default option, out of sync with what
-  // the DSP is actually still doing. Push the real state back to the UI
-  // every time the WebView (re)loads, same idea as SendCurrentPresetName()/
-  // SendFactoryPresetList() below already do for their own state - user
-  // report (2026-08-26): "GUIをもう一度開くとFIXEDに戻ってしまいます" (opening
-  // the GUI again shows Fixed) - display-only, the DSP itself was still
-  // applying whatever had actually been selected.
-  EvaluateJavaScript(("if (typeof SetOscPhaseModeDisplay === 'function') { SetOscPhaseModeDisplay(" + std::to_string(mOscPhaseFixed ? 1 : 0) + "); }").c_str());
 #else
   EvaluateJavaScript("if (typeof SetDevBuild === 'function') { SetDevBuild(false); }");
 #endif

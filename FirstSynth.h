@@ -64,22 +64,12 @@ enum EMsgTags
   // .preset files themselves. Appended per this project's "never renumber"
   // convention.
   kMsgTagFactoryPresetList, // C++ -> UI: '\n'-joined UTF8 names (a subset of kMsgTagPresetList's names) currently marked factory. Sent from OnWebContentLoaded() and again after every mark toggle/delete.
-  kMsgTagPresetToggleFactory, // UI -> C++: UTF8 preset name - toggles whether it's currently marked factory (see TogglePresetFactoryMark())
-  // 2026-08-26 user request: dev-only A/B toggle between the current "fixed
-  // phase" oscillator behavior (mPhase1/mPhase2 reset to 0 on every note-on -
-  // the existing, unconditional behavior) and a "free" mode that leaves the
-  // phase wherever it was, matching typical free-running analog oscillator
-  // behavior - see Voice::mFixedPhase's own comment. Always declared (never
-  // renumbered, same as every other message here), but its actual handling
-  // on both the C++ side (OnMessage) and the WebView UI that sends it are
-  // entirely #ifdef _DEBUG - compiled out of Release builds completely, not
-  // just hidden. (A sibling dev-only tool, kMsgTagSetEnvTimeCurvePreset, used
-  // to occupy this slot's old number - removed 2026-08-26 once the user
-  // settled on the Pigments curve as final and no longer needed the A/B
-  // comparison; safe to actually remove and let this slot's own number shift
-  // down, since it was never persisted/saved anywhere, unlike a real host-
-  // automatable param.)
-  kMsgTagSetOscPhaseMode // UI -> C++: ctrlTag = 1 (fixed, default) or 0 (free) - Debug builds only
+  kMsgTagPresetToggleFactory // UI -> C++: UTF8 preset name - toggles whether it's currently marked factory (see TogglePresetFactoryMark())
+  // (kMsgTagSetOscPhaseMode, a dev-only fixed/free oscillator-phase A/B toggle,
+  // lived here 2026-08-26..2026-09-01 - removed once the user confirmed the
+  // difference was inaudible in this synth, see progress.md. Phase now always
+  // resets to 0 on note-on, unconditionally, as it did before the toggle. This
+  // slot was never persisted anywhere, so removing it outright is safe.)
 };
 
 enum EParams
@@ -243,6 +233,11 @@ enum EParams
   // existing free-running param name) instead of "Rate".
   kParamDelayTimeTempo,
   kParamDelayTimeMode,
+  // added 2026-09-01, appended per this project's "never renumber" convention -
+  // depth (0-100%) of a slow, bounded, per-oscillator analog-style pitch drift.
+  // Placed next to Bend Range in the Mixer area of the UI. 0 = off (no change
+  // for existing presets). See FirstSynth_DSP.h's Voice::mOscDrift.
+  kParamOscDrift,
   kNumParams
 };
 
@@ -297,13 +292,6 @@ private:
   ReverbEffect<sample> mReverb;
   ParametricEQEffect<sample> mEQ;
   bool mEQBypassed = false; // set directly from OnParamChange, read every sample in ProcessBlock - same non-atomic convention as this file's other simple effect toggles (e.g. LooperEffect's own state), safe since OnParamChange already runs serialized with audio processing
-#ifdef _DEBUG
-  // 2026-08-26 dev-only tool - see kMsgTagSetOscPhaseMode's own comment in the
-  // EMsgTags enum above. Broadcasts to every pooled voice's own mFixedPhase
-  // flag (Voice, FirstSynth_DSP.h) via the usual ForEachVoice pattern.
-  bool mOscPhaseFixed = true; // mirrors each Voice's own default
-  void SetOscPhaseMode(bool fixed);
-#endif
   LooperEffect<sample> mLooper;
   std::atomic<bool> mLooperStateDirty {false}; // set from ProcessBlock (audio thread) when the looper auto-stops recording, consumed by OnIdle() (main thread)
   std::atomic<bool> mLooperWaveformDirty {false}; // same idiom, also set when the looper auto-stops recording (the only recording-finish case that happens off the main thread - UI-triggered Stop/CycleTransport push the waveform directly, see OnMessage)
