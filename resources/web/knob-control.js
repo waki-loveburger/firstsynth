@@ -359,6 +359,14 @@ class KnobControl extends HTMLElement {
     
     // Expose updateValue method with a different name to avoid conflicts
     this.updateValueFromHost = (normalizedValue) => updateValue(normalizedValue, true);
+
+    // 2026-08-26: re-renders the pointer/arc/label from whatever normalized
+    // value this knob already has, without changing it - currentNorm itself
+    // has no public getter, so callers that mutate this knob's min/max/
+    // shapeExponent *after* construction (e.g. a dev-only alternate-curve
+    // A/B test) have no other way to force the displayed number to reflect
+    // that change until the next real drag/host update happens to occur.
+    this.refreshDisplay = () => updateValue(currentNorm, true);
   }
   
   connectedCallback() {

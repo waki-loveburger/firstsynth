@@ -26,10 +26,23 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
 
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
   GetParam(kParamNoteGlideTime)->InitDouble("Note Glide Time", 0., 0., 2000., 0.1, "ms", IParam::kFlagsNone, "", IParam::ShapePowCurve(3.));
-  GetParam(kParamAttack)->InitDouble("Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
-  GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  // 2026-08-26 user request: adopted Pigments' own Attack/Decay/Release knob
+  // curve/range wholesale, after directly A/B-comparing it (and a Sylenth1
+  // reproduction, abandoned - see progress.md - once the user's own
+  // transcribed Sylenth1 reference numbers turned out not to actually be in
+  // seconds after all) via a dev-only tool - removed once this decision was
+  // finalized, see progress.md's 2026-08-26 entries for the full story.
+  // Was ShapePowCurve(3.), min 1/1/2, max 1000/4000/8000 (a different range
+  // per stage) - now one shared 0-20000ms range/exponent for all three,
+  // exponent solved from Pigments' own measured 12-o'clock/50%-rotation
+  // value (1300ms, i.e. pow(0.5, exp) = 1300/20000). User confirmed this is
+  // fine to change even though it changes already-saved presets' ADSR
+  // sound (same knob position now means a different time) - still early
+  // development, not a concern yet.
+  GetParam(kParamAttack)->InitDouble("Attack", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.9434164716336326));
+  GetParam(kParamDecay)->InitDouble("Decay", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamRelease)->InitDouble("Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamRelease)->InitDouble("Release", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamLFOShape)->InitEnum("Pitch LFO Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
   GetParam(kParamLFORateHz)->InitFrequency("Pitch LFO Rate", 1., 0.01, 40.);
   GetParam(kParamLFORateTempo)->InitEnum("Pitch LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
@@ -81,10 +94,12 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   // high end, not just the normal 1:1-at-100% tracking.
   GetParam(kParamFilterKeyFollow)->InitDouble("Key Follow", 0., 0., 150., 0.01, "%", IParam::kFlagsNone, "FILTER");
   GetParam(kParamFilterEnvAmount)->InitDouble("Env Amount", 0., -100., 100., 0.01, "%", IParam::kFlagsNone, "FILTER");
-  GetParam(kParamFilterAttack)->InitDouble("Filter Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.));
-  GetParam(kParamFilterDecay)->InitDouble("Filter Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.));
+  // Same Pigments-curve adoption as the Amp ADSR above (kParamAttack's own
+  // comment has the full story) - identical range/exponent, applied here too.
+  GetParam(kParamFilterAttack)->InitDouble("Filter Attack", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.9434164716336326));
+  GetParam(kParamFilterDecay)->InitDouble("Filter Decay", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamFilterSustain)->InitDouble("Filter Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "FILTER ADSR");
-  GetParam(kParamFilterRelease)->InitDouble("Filter Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamFilterRelease)->InitDouble("Filter Release", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "FILTER ADSR", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamFilterLFOShape)->InitEnum("Filter LFO Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
   GetParam(kParamFilterLFORateHz)->InitFrequency("Filter LFO Rate", 1., 0.01, 40.);
   GetParam(kParamFilterLFORateTempo)->InitEnum("Filter LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
@@ -107,6 +122,14 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   GetParam(kParamDelayFeedback)->InitDouble("Delay Feedback", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "DELAY");
   GetParam(kParamDelayMix)->InitDouble("Delay Mix", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "DELAY");
   GetParam(kParamDelayPingPong)->InitBool("Delay Ping Pong", false, "", IParam::kFlagsNone, "DELAY");
+  // 2026-08-25 user request: tempo-sync, same InitEnum/InitBool shape as the
+  // LFOs' own Rate(Tempo)/Sync pair (kParamLFORateTempo/kParamLFORateMode) -
+  // see kParamDelayTimeTempo's own comment in FirstSynth.h for the naming.
+  // Sync defaults to false (unlike the LFOs, which default true) - existing
+  // presets/patches saved before this param existed must keep sounding exactly
+  // as they did (plain ms-based Delay Time), not silently switch to synced.
+  GetParam(kParamDelayTimeTempo)->InitEnum("Delay Time", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  GetParam(kParamDelayTimeMode)->InitBool("Delay Sync", false, "", IParam::kFlagsNone, "DELAY");
   GetParam(kParamReverbDecay)->InitDouble("Reverb Decay", 50., 0., 100., 0.01, "%", IParam::kFlagsNone, "REVERB");
   GetParam(kParamReverbDamping)->InitDouble("Reverb Damping", 50., 0., 100., 0.01, "%", IParam::kFlagsNone, "REVERB");
   GetParam(kParamReverbMix)->InitDouble("Reverb Mix", 30., 0., 100., 0.01, "%", IParam::kFlagsNone, "REVERB");
@@ -140,6 +163,7 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   GetParam(kParamEQBand4Q)->InitDouble("EQ Band4 Q", 0.62, 0.1, 10., 0.01, "", IParam::kFlagsNone, "EQ");
   GetParam(kParamEQHighFreq)->InitFrequency("EQ High Freq", 4865., 20., 20000.);
   GetParam(kParamEQHighGain)->InitDouble("EQ High Gain", 3.60, -15., 15., 0.01, "dB", IParam::kFlagsNone, "EQ");
+  GetParam(kParamEQBypass)->InitBool("EQ Bypass", false, "", IParam::kFlagsNone, "EQ");
 
   // Modulation Matrix (2026-07-28) - 2 free LFOs + 2 free ADSR envelopes (not
   // hard-wired to any single destination, unlike Pitch/Filter/Amp LFO above) plus
@@ -154,14 +178,15 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   GetParam(kParamModLFO2RateHz)->InitFrequency("Mod LFO 2 Rate", 1., 0.01, 40.);
   GetParam(kParamModLFO2RateTempo)->InitEnum("Mod LFO 2 Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   GetParam(kParamModLFO2RateMode)->InitBool("Mod LFO 2 Sync", true);
-  GetParam(kParamModEnv1Attack)->InitDouble("Mod Env 1 Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
-  GetParam(kParamModEnv1Decay)->InitDouble("Mod Env 1 Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  // Pigments curve (min=0, max=20000ms, exponent solves pow(0.5,exp)=1300/20000) - matches Amp/Filter ADSR, see progress.md 2026-08-25
+  GetParam(kParamModEnv1Attack)->InitDouble("Mod Env 1 Attack", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.9434164716336326));
+  GetParam(kParamModEnv1Decay)->InitDouble("Mod Env 1 Decay", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamModEnv1Sustain)->InitDouble("Mod Env 1 Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "MATRIX");
-  GetParam(kParamModEnv1Release)->InitDouble("Mod Env 1 Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
-  GetParam(kParamModEnv2Attack)->InitDouble("Mod Env 2 Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
-  GetParam(kParamModEnv2Decay)->InitDouble("Mod Env 2 Decay", 10., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv1Release)->InitDouble("Mod Env 1 Release", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.9434164716336326));
+  GetParam(kParamModEnv2Attack)->InitDouble("Mod Env 2 Attack", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.9434164716336326));
+  GetParam(kParamModEnv2Decay)->InitDouble("Mod Env 2 Decay", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamModEnv2Sustain)->InitDouble("Mod Env 2 Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "MATRIX");
-  GetParam(kParamModEnv2Release)->InitDouble("Mod Env 2 Release", 10., 2., 8000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.));
+  GetParam(kParamModEnv2Release)->InitDouble("Mod Env 2 Release", 10., 0., 20000., 0.1, "ms", IParam::kFlagsNone, "MATRIX", IParam::ShapePowCurve(3.9434164716336326));
   GetParam(kParamMatrix1Source)->InitEnum("Matrix 1 Source", 0, {"None", "Mod LFO 1", "Mod LFO 2", "Mod Env 1", "Mod Env 2", "Velocity", "Key Follow", "Mod Wheel"}, IParam::kFlagsNone, "MATRIX");
   GetParam(kParamMatrix1Dest)->InitEnum("Matrix 1 Dest", 0, {"None", "Filter Cutoff", "Filter Resonance", "Osc1 Pitch", "Osc2 Pitch", "Amp Level", "Pan", "Wave Shape 1", "Wave Shape 2", "Osc1 Level", "Osc2 Level", "Noise Level", "Osc1 Pitch Fine", "Osc2 Pitch Fine", "Amp Env Time", "Filter Env Time", "Mod Env 1 Time", "Mod Env 2 Time"}, IParam::kFlagsNone, "MATRIX");
   GetParam(kParamMatrix1Amount)->InitDouble("Matrix 1 Amount", 0., -100., 100., 0.1, "%", IParam::kFlagsNone, "MATRIX");
@@ -250,13 +275,21 @@ void FirstSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 #endif
   mDSP.ProcessBlock(nullptr, outputs, 2, nFrames, mTimeInfo.mPPQPos, mTimeInfo.mTransportIsRunning, tempo);
 
+  // 2026-08-25: Delay's tempo-sync (kParamDelayTimeMode) needs the current tempo,
+  // same as the LFOs above already get via mDSP.ProcessBlock()'s own tempo arg -
+  // but mDelay lives here in FirstSynth, not in FirstSynth_DSP.h, and only cares
+  // about the current value (not per-sample phase), so a plain once-per-block
+  // setter is enough - no need to route it through ProcessBlock's own signature.
+  mDelay.SetTempo(tempo);
+
   for (int s = 0; s < nFrames; s++)
   {
     mBassBoost.Process(outputs[0][s], outputs[1][s]);
     mChorus.Process(outputs[0][s], outputs[1][s]);
     mDelay.Process(outputs[0][s], outputs[1][s]);
     mReverb.Process(outputs[0][s], outputs[1][s]);
-    mEQ.Process(outputs[0][s], outputs[1][s]);
+    if (!mEQBypassed)
+      mEQ.Process(outputs[0][s], outputs[1][s]);
 
     if (mLooper.Process(outputs[0][s], outputs[1][s]))
     {
@@ -385,6 +418,16 @@ void FirstSynth::SendPresetList()
   SendArbitraryMsgFromDelegate(kMsgTagPresetList, joined.GetLength(), joined.Get());
 }
 
+void FirstSynth::SendCurrentPresetName()
+{
+  SendArbitraryMsgFromDelegate(kMsgTagCurrentPresetName, mCurrentPresetName.GetLength(), mCurrentPresetName.Get());
+}
+
+// forward declarations - defined further down, alongside FirstSynth::SendFactoryPresetList()/
+// TogglePresetFactoryMark(), but also needed here by DeletePresetByName()
+static void ReadFactoryMarks(const WDL_String& path, std::vector<std::string>& outNames);
+static void WriteFactoryMarks(const WDL_String& path, const std::vector<std::string>& names);
+
 void FirstSynth::SavePresetAs(const char* rawName)
 {
   WDL_String safeName;
@@ -406,6 +449,9 @@ void FirstSynth::SavePresetAs(const char* rawName)
     {
       fwrite(chunk.GetData(), 1, (size_t) chunk.Size(), fp);
       fclose(fp);
+
+      mCurrentPresetName.Set(safeName.Get());
+      SendCurrentPresetName();
     }
   }
 
@@ -442,6 +488,9 @@ void FirstSynth::LoadPresetByName(const char* rawName)
     chunk.PutBytes(buf.data(), (int) buf.size());
     UnserializeState(chunk, 0);
     OnRestoreState(); // pushes every restored param's new value to the WebView UI - same combo LoadAutoState() below uses
+
+    mCurrentPresetName.Set(safeName.Get());
+    SendCurrentPresetName();
   }
 
   fclose(fp);
@@ -467,7 +516,133 @@ void FirstSynth::DeletePresetByName(const char* rawName)
   std::error_code ec;
   std::filesystem::remove(path.Get(), ec); // ec deliberately ignored, matches this file's other filesystem calls
 
+  // A deleted preset can't stay marked "factory" - clean up the sidecar file
+  // too, same spirit as the mCurrentPresetName cleanup right below.
+  {
+    WDL_String marksPath;
+    GetFactoryMarksPath(marksPath);
+    std::vector<std::string> names;
+    ReadFactoryMarks(marksPath, names);
+    auto it = std::find(names.begin(), names.end(), std::string(safeName.Get()));
+    if (it != names.end())
+    {
+      names.erase(it);
+      WriteFactoryMarks(marksPath, names);
+      SendFactoryPresetList();
+    }
+  }
+
+  if (mCurrentPresetName.GetLength() > 0 && !strcmp(mCurrentPresetName.Get(), safeName.Get()))
+  {
+    mCurrentPresetName.Set(""); // it's gone - nothing is "currently loaded" from a preset's perspective any more
+    SendCurrentPresetName();
+  }
+
   SendPresetList(); // refresh the UI's dropdown so the deleted preset disappears immediately
+}
+
+// File-local helpers for the factory-marks sidecar file (see
+// GetFactoryMarksPath()'s own comment) - one sanitized preset name per line,
+// plain text, matching this project's existing '\n'-joined convention rather
+// than JSON (no other part of this file's preset I/O needs a parser either).
+static void ReadFactoryMarks(const WDL_String& path, std::vector<std::string>& outNames)
+{
+  outNames.clear();
+
+  FILE* fp = fopen(path.Get(), "rb");
+  if (!fp)
+    return;
+
+  fseek(fp, 0, SEEK_END);
+  long fileSize = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
+
+  if (fileSize > 0)
+  {
+    std::vector<char> buf((size_t) fileSize);
+    fread(buf.data(), 1, buf.size(), fp);
+
+    std::string content(buf.data(), buf.size());
+    size_t start = 0;
+    while (start <= content.size())
+    {
+      size_t nl = content.find('\n', start);
+      std::string line = (nl == std::string::npos) ? content.substr(start) : content.substr(start, nl - start);
+      if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+      if (!line.empty())
+        outNames.push_back(line);
+      if (nl == std::string::npos)
+        break;
+      start = nl + 1;
+    }
+  }
+
+  fclose(fp);
+}
+
+static void WriteFactoryMarks(const WDL_String& path, const std::vector<std::string>& names)
+{
+  FILE* fp = fopen(path.Get(), "wb");
+  if (!fp)
+    return;
+
+  for (const auto& name : names)
+  {
+    fwrite(name.data(), 1, name.size(), fp);
+    fwrite("\n", 1, 1, fp);
+  }
+
+  fclose(fp);
+}
+
+void FirstSynth::GetFactoryMarksPath(WDL_String& path)
+{
+  GetPresetsDir(path);
+  path.Append("\\_factory.txt");
+}
+
+void FirstSynth::SendFactoryPresetList()
+{
+  WDL_String path;
+  GetFactoryMarksPath(path);
+
+  std::vector<std::string> names;
+  ReadFactoryMarks(path, names);
+
+  WDL_String joined;
+  for (const auto& name : names)
+  {
+    if (joined.GetLength() > 0)
+      joined.Append("\n");
+    joined.Append(name.c_str());
+  }
+
+  SendArbitraryMsgFromDelegate(kMsgTagFactoryPresetList, joined.GetLength(), joined.Get());
+}
+
+void FirstSynth::TogglePresetFactoryMark(const char* rawName)
+{
+  WDL_String safeName;
+  SanitizePresetName(rawName, safeName);
+  if (safeName.GetLength() == 0)
+    return;
+
+  WDL_String path;
+  GetFactoryMarksPath(path);
+
+  std::vector<std::string> names;
+  ReadFactoryMarks(path, names);
+
+  std::string target(safeName.Get());
+  auto it = std::find(names.begin(), names.end(), target);
+  if (it != names.end())
+    names.erase(it);
+  else
+    names.push_back(target);
+
+  WriteFactoryMarks(path, names);
+  SendFactoryPresetList();
 }
 
 #ifdef APP_API
@@ -486,6 +661,12 @@ void FirstSynth::GetAutoStatePath(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
   path.Append("\\autosave.state");
+}
+
+void FirstSynth::GetAutoStatePresetNamePath(WDL_String& path)
+{
+  INIPath(path, "FirstSynth");
+  path.Append("\\autosave_presetname.txt");
 }
 
 // called from OnWebContentLoaded() (below), same timing as the existing
@@ -515,6 +696,22 @@ void FirstSynth::LoadAutoState()
     IByteChunk chunk;
     chunk.PutBytes(buf.data(), (int) buf.size());
     UnserializeState(chunk, 0);
+
+    // Which preset name (if any) this just-restored state actually came from -
+    // see GetAutoStatePresetNamePath()'s own comment. A missing/unreadable
+    // sidecar just leaves mCurrentPresetName blank, same as any other instance
+    // that never had a named preset behind it - never treated as fatal.
+    WDL_String namePath;
+    GetAutoStatePresetNamePath(namePath);
+    FILE* nameFp = fopen(namePath.Get(), "rb");
+    if (nameFp)
+    {
+      char nameBuf[256] = {0};
+      size_t n = fread(nameBuf, 1, sizeof(nameBuf) - 1, nameFp);
+      nameBuf[n] = '\0';
+      mCurrentPresetName.Set(nameBuf);
+      fclose(nameFp);
+    }
   }
 
   fclose(fp);
@@ -534,6 +731,15 @@ void FirstSynth::SaveAutoState()
       fwrite(chunk.GetData(), 1, (size_t) chunk.Size(), fp);
       fclose(fp);
     }
+  }
+
+  WDL_String namePath;
+  GetAutoStatePresetNamePath(namePath);
+  FILE* nameFp = fopen(namePath.Get(), "wb");
+  if (nameFp)
+  {
+    fwrite(mCurrentPresetName.Get(), 1, (size_t) mCurrentPresetName.GetLength(), nameFp);
+    fclose(nameFp);
   }
 }
 #endif
@@ -877,6 +1083,21 @@ bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pD
     return true;
   }
 
+  if (msgTag == kMsgTagPresetToggleFactory && dataSize > 0)
+  {
+    std::string name((const char*) pData, (size_t) dataSize);
+    TogglePresetFactoryMark(name.c_str());
+    return true;
+  }
+
+#ifdef _DEBUG
+  if (msgTag == kMsgTagSetOscPhaseMode)
+  {
+    SetOscPhaseMode(ctrlTag != 0);
+    return true;
+  }
+#endif
+
 #ifdef APP_API
   if (msgTag == kMsgTagSetStandaloneTempo && dataSize >= 4)
   {
@@ -891,6 +1112,18 @@ bool FirstSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pD
 
   return false;
 }
+
+#ifdef _DEBUG
+// 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's own
+// comment in the EMsgTags enum. Just forwards to the DSP's own ForEachVoice
+// broadcast (FirstSynth_DSP.h) - mOscPhaseFixed here only exists to mirror the
+// current state back if ever needed.
+void FirstSynth::SetOscPhaseMode(bool fixed)
+{
+  mOscPhaseFixed = fixed;
+  mDSP.SetOscPhaseMode(fixed);
+}
+#endif
 
 void FirstSynth::OnParamChange(int paramIdx)
 {
@@ -918,6 +1151,8 @@ void FirstSynth::OnParamChange(int paramIdx)
     case kParamDelayFeedback:  mDelay.SetFeedback((sample) value / 100.); break;
     case kParamDelayMix:       mDelay.SetMix((sample) value / 100.); break;
     case kParamDelayPingPong:  mDelay.SetPingPong(value > 0.5); break;
+    case kParamDelayTimeTempo: mDelay.SetDivision((int) value); break;
+    case kParamDelayTimeMode:  mDelay.SetSyncMode(value > 0.5); break;
     case kParamReverbDecay:    mReverb.SetDecay((sample) value / 100.); break;
     case kParamReverbDamping:  mReverb.SetDamping((sample) value / 100.); break;
     case kParamReverbMix:      mReverb.SetMix((sample) value / 100.); break;
@@ -938,6 +1173,7 @@ void FirstSynth::OnParamChange(int paramIdx)
     case kParamEQBand4Q:       mEQ.SetQ(3, (sample) value); break;
     case kParamEQHighFreq:     mEQ.SetFreq(4, (sample) value); break;
     case kParamEQHighGain:     mEQ.SetGainDb(4, (sample) value); break;
+    case kParamEQBypass:       mEQBypassed = value > 0.5; break;
     default:                   mDSP.SetParam(paramIdx, value); break;
   }
 #endif
@@ -993,6 +1229,40 @@ void FirstSynth::OnWebContentLoaded()
   // cross-format preset browser (index.html) - not gated on APP_API, works the same
   // in every build, see kMsgTagPresetList's comment in FirstSynth.h
   SendPresetList();
+  // Reflects whatever this instance's mCurrentPresetName already is right now -
+  // correctly empty for a genuinely fresh instance (e.g. just inserted in a DAW
+  // project), or the real last-loaded/-saved name if the GUI is merely being
+  // reopened on an already-running instance (mCurrentPresetName isn't reset by a
+  // WebView reload, only by an actual Load/Save/Delete - see its own comment).
+  // Sent again below, after LoadAutoState(), for the Standalone case where that
+  // call can update mCurrentPresetName from the on-disk sidecar file.
+  SendCurrentPresetName();
+  // "Factory" marks (see kMsgTagFactoryPresetList's own comment) - not tied to
+  // this instance's own state at all (just a shared sidecar file next to the
+  // presets themselves), so one send here is enough; no APP_API-only re-send
+  // needed like SendCurrentPresetName() above.
+  SendFactoryPresetList();
+
+  // The Factory toggle button itself (index.html) is a developer-only tool for
+  // marking presets, not something a real end user's copy should show - see
+  // that button's own HTML comment. It starts hidden in the markup; this is
+  // the only thing that ever reveals it, and only in a Debug build.
+#ifdef _DEBUG
+  EvaluateJavaScript("if (typeof SetDevBuild === 'function') { SetDevBuild(true); }");
+  // The Osc Phase Mode dev tool keeps its real current state in a plain C++
+  // member (mOscPhaseFixed) that's untouched by a GUI close/reopen - only the
+  // WebView itself gets torn down and recreated, so its HTML always restarts
+  // showing the <select>'s hardcoded default option, out of sync with what
+  // the DSP is actually still doing. Push the real state back to the UI
+  // every time the WebView (re)loads, same idea as SendCurrentPresetName()/
+  // SendFactoryPresetList() below already do for their own state - user
+  // report (2026-08-26): "GUIをもう一度開くとFIXEDに戻ってしまいます" (opening
+  // the GUI again shows Fixed) - display-only, the DSP itself was still
+  // applying whatever had actually been selected.
+  EvaluateJavaScript(("if (typeof SetOscPhaseModeDisplay === 'function') { SetOscPhaseModeDisplay(" + std::to_string(mOscPhaseFixed ? 1 : 0) + "); }").c_str());
+#else
+  EvaluateJavaScript("if (typeof SetDevBuild === 'function') { SetDevBuild(false); }");
+#endif
 
   // Subscription licence gate (eni_auth, 2026-08-24) - not gated on APP_API either,
   // the lock screen must appear in every plugin format. mLicence was already computed
@@ -1023,6 +1293,10 @@ void FirstSynth::OnWebContentLoaded()
   // was chosen over restoring earlier, directly in the constructor).
   LoadAutoState();
   OnRestoreState();
+  // LoadAutoState() may have just updated mCurrentPresetName from the sidecar
+  // file (Standalone-only) - re-send now that it reflects the real restored
+  // state, superseding the empty one sent unconditionally above.
+  SendCurrentPresetName();
   // only from this point on does a param change get treated as "real" and worth
   // saving - see mAutoStateLoaded's own comment in FirstSynth.h for the startup race
   // this prevents.

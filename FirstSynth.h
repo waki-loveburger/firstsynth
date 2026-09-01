@@ -44,7 +44,42 @@ enum EMsgTags
   kMsgTagLicenceState, // C++ -> UI: 1 byte (0=locked/unlicensed, 1=licensed). Sent once from OnWebContentLoaded() with the licence state computed at construction, and again from OnIdle() after a successful login.
   kMsgTagLicenceLoginRequest, // UI -> C++: no data - "log in" button click, starts eni::RunDeviceFlow() on a detached worker thread (see OnMessage())
   kMsgTagLicenceDeviceCode, // C++ -> UI: UTF8 text "userCode\nverificationUri\nverificationUriComplete", pushed once RunDeviceFlow's onCode callback fires - the fallback code/URL shown while the browser tab is open
-  kMsgTagLicenceLoginResult // C++ -> UI: 1 byte outcome (0=success, 1=failure-generic, 2=failure-no_subscription) followed by UTF8 err.message (already Japanese; empty on success)
+  kMsgTagLicenceLoginResult, // C++ -> UI: 1 byte outcome (0=success, 1=failure-generic, 2=failure-no_subscription) followed by UTF8 err.message (already Japanese; empty on success)
+  // 2026-08-25 bug report: a freshly-inserted DAW instance showed a leftover
+  // preset name (e.g. "5th Strings") in the WebView dropdown while the actual
+  // sound was still the init patch - the dropdown used to guess its label from
+  // a browser-wide localStorage key (shared by every instance/host/project on
+  // the machine, see index.html's old kLastPresetStorageKey), which had no
+  // relation to what THIS instance's params actually were. This message
+  // replaces that guess with the real answer, tracked in C++ (mCurrentPresetName,
+  // updated only by an actual LoadPresetByName()/SavePresetAs() on this exact
+  // instance) - appended per this project's "never renumber" convention.
+  kMsgTagCurrentPresetName, // C++ -> UI: UTF8 current preset name, empty if nothing's actually been loaded/saved this instance. Sent from OnWebContentLoaded() (see SendCurrentPresetName()), so it's re-sent honestly every time the editor GUI reopens.
+  // 2026-08-25 user request: mark specific presets as "factory" (工場出荷用)
+  // while developing with a full mixed pool of finished and work-in-progress
+  // presets in the same folder - a future installer/packaging step can then
+  // seed a new user's Presets folder from just the marked ones, without
+  // needing a separate dev-only folder or any other workflow change. Marks
+  // are stored in a small sidecar file (see GetFactoryMarksPath()), not the
+  // .preset files themselves. Appended per this project's "never renumber"
+  // convention.
+  kMsgTagFactoryPresetList, // C++ -> UI: '\n'-joined UTF8 names (a subset of kMsgTagPresetList's names) currently marked factory. Sent from OnWebContentLoaded() and again after every mark toggle/delete.
+  kMsgTagPresetToggleFactory, // UI -> C++: UTF8 preset name - toggles whether it's currently marked factory (see TogglePresetFactoryMark())
+  // 2026-08-26 user request: dev-only A/B toggle between the current "fixed
+  // phase" oscillator behavior (mPhase1/mPhase2 reset to 0 on every note-on -
+  // the existing, unconditional behavior) and a "free" mode that leaves the
+  // phase wherever it was, matching typical free-running analog oscillator
+  // behavior - see Voice::mFixedPhase's own comment. Always declared (never
+  // renumbered, same as every other message here), but its actual handling
+  // on both the C++ side (OnMessage) and the WebView UI that sends it are
+  // entirely #ifdef _DEBUG - compiled out of Release builds completely, not
+  // just hidden. (A sibling dev-only tool, kMsgTagSetEnvTimeCurvePreset, used
+  // to occupy this slot's old number - removed 2026-08-26 once the user
+  // settled on the Pigments curve as final and no longer needed the A/B
+  // comparison; safe to actually remove and let this slot's own number shift
+  // down, since it was never persisted/saved anywhere, unlike a real host-
+  // automatable param.)
+  kMsgTagSetOscPhaseMode // UI -> C++: ctrlTag = 1 (fixed, default) or 0 (free) - Debug builds only
 };
 
 enum EParams
@@ -194,6 +229,20 @@ enum EParams
   // a plain highpass with only a cutoff knob, no resonance control. See
   // FirstSynth_DSP.h's Voice::mHPFCutoff/mHPFStage.
   kParamHPFCutoff,
+  // added 2026-08-25, appended per this project's "never renumber" convention -
+  // bypass switch for the 5-band parametric EQ, placed inside the PEQ LOCK's
+  // unlocked panel content (user request) - lets the user A/B the EQ's effect
+  // without resetting any of its band settings.
+  kParamEQBypass,
+  // added 2026-08-25, appended per this project's "never renumber" convention -
+  // tempo-sync for the Delay effect, mirroring the existing LFO Rate (Hz) /
+  // Rate (Tempo) / Sync pattern as closely as this effect's own architecture
+  // allows (DelayEffect isn't an LFO<T>/IOscillator<T>, so it needed its own
+  // small tempo-division port - see FirstSynth_Effects.h's DelayEffect). Naming
+  // mirrors kParamLFORateTempo/kParamLFORateMode but with "Time" (Delay's own
+  // existing free-running param name) instead of "Rate".
+  kParamDelayTimeTempo,
+  kParamDelayTimeMode,
   kNumParams
 };
 
@@ -247,6 +296,14 @@ private:
   DelayEffect<sample> mDelay;
   ReverbEffect<sample> mReverb;
   ParametricEQEffect<sample> mEQ;
+  bool mEQBypassed = false; // set directly from OnParamChange, read every sample in ProcessBlock - same non-atomic convention as this file's other simple effect toggles (e.g. LooperEffect's own state), safe since OnParamChange already runs serialized with audio processing
+#ifdef _DEBUG
+  // 2026-08-26 dev-only tool - see kMsgTagSetOscPhaseMode's own comment in the
+  // EMsgTags enum above. Broadcasts to every pooled voice's own mFixedPhase
+  // flag (Voice, FirstSynth_DSP.h) via the usual ForEachVoice pattern.
+  bool mOscPhaseFixed = true; // mirrors each Voice's own default
+  void SetOscPhaseMode(bool fixed);
+#endif
   LooperEffect<sample> mLooper;
   std::atomic<bool> mLooperStateDirty {false}; // set from ProcessBlock (audio thread) when the looper auto-stops recording, consumed by OnIdle() (main thread)
   std::atomic<bool> mLooperWaveformDirty {false}; // same idiom, also set when the looper auto-stops recording (the only recording-finish case that happens off the main thread - UI-triggered Stop/CycleTransport push the waveform directly, see OnMessage)
@@ -270,6 +327,28 @@ private:
   void SavePresetAs(const char* rawName); // sanitizes rawName, writes <dir>/<name>.preset, refreshes the list. Overwrites in place if that file already exists (no separate "overwrite" path needed).
   void LoadPresetByName(const char* rawName); // sanitizes rawName, reads <dir>/<name>.preset, restores it
   void DeletePresetByName(const char* rawName); // sanitizes rawName, removes <dir>/<name>.preset if present, refreshes the list
+  // The name of the preset actually behind this instance's current param state,
+  // if any - see kMsgTagCurrentPresetName's own comment for why this replaced a
+  // localStorage-based guess on the WebView side. Empty for a genuinely fresh
+  // instance (correct: there's no preset behind the init patch). Kept in memory
+  // only, deliberately NOT part of SerializeState()'s own chunk (that chunk is
+  // shared byte-for-byte with real DAW project state and every *.preset file -
+  // adding a field there risks exactly the kind of layout mismatch this project
+  // has been bitten by before), so it naturally survives a GUI close/reopen on
+  // the same instance (the WebView is torn down and reloaded on every such
+  // reopen, but this C++ member isn't) while staying correctly blank for any
+  // instance that never actually loaded/saved a named preset itself.
+  WDL_String mCurrentPresetName;
+  void SendCurrentPresetName(); // pushes mCurrentPresetName via kMsgTagCurrentPresetName
+  // "Factory" (1軍/工場出荷用) marks - see kMsgTagFactoryPresetList's own comment
+  // in the EMsgTags enum above for why this exists. Stored as a plain '\n'-joined
+  // sidecar text file, <GetPresetsDir()>\_factory.txt - the leading underscore
+  // keeps it out of SendPresetList()'s enumeration (already filtered to ".preset"
+  // files only), so it can live right alongside the actual presets without ever
+  // showing up as one itself.
+  void GetFactoryMarksPath(WDL_String& path);
+  void SendFactoryPresetList(); // reads the sidecar file, pushes kMsgTagFactoryPresetList
+  void TogglePresetFactoryMark(const char* rawName); // sanitizes, flips membership in the sidecar file, refreshes the UI
   // Preset names double as filenames, and rawName arrives from free-text WebView
   // input - only alnum/space/hyphen/underscore/parens survive, everything else
   // (including any path separator or "..") is stripped, and the result is length-
@@ -282,6 +361,13 @@ private:
   // is already persisted by the host's own project save/reload (SerializeState/
   // UnserializeState), so this file-based mechanism only makes sense for Standalone.
   void GetAutoStatePath(WDL_String& path);
+  // Small sidecar text file alongside autosave.state, holding mCurrentPresetName
+  // at the time of the last SaveAutoState() - kept separate from autosave.state's
+  // own chunk for the same reason mCurrentPresetName isn't part of SerializeState()
+  // (see its own comment). Standalone-only: this is what lets the preset-name
+  // label (not just the actual sound) correctly survive an app relaunch, same as
+  // it always has.
+  void GetAutoStatePresetNamePath(WDL_String& path);
   void LoadAutoState();
   void SaveAutoState();
   std::atomic<bool> mAutoStateDirty {false}; // set by OnParamChange (any param), consumed by OnIdle()

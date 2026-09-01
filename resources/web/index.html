@@ -1463,16 +1463,60 @@
     // reliably, independent of that transient visual blank state.
     let currentPresetName = '';
 
-    // 2026-08-02: the actual sound/params already survive close-and-reopen via
-    // the separate auto-persist-across-launches mechanism (autosave.state), but
-    // "which preset name was selected" isn't itself a param, so it was never part
-    // of that restore - the dropdown just fell back to showing whatever preset
-    // happened to be first in the list, even though the real loaded sound was a
-    // different one entirely. Persisted here via localStorage, same pattern as
-    // UI Zoom/Dark Mode/PEQ Lock - see LoadPreset() (writes it on every load) and
-    // UpdatePresetList() (reads it as a fallback on the very first sync, when the
-    // <select> has no prior value of its own yet).
-    const kLastPresetStorageKey = 'firstSynthLastPreset';
+    // Names currently marked "factory" (1軍/工場出荷用) - see
+    // kMsgTagFactoryPresetList's own comment in FirstSynth.h. Populated by that
+    // message's handler below; ApplyFactoryMarkers() re-decorates the <select>'s
+    // options from this set whenever either it or the preset list itself changes.
+    let factoryPresetNames = new Set();
+
+    function ApplyFactoryMarkers() {
+      const select = document.getElementById('presetSelect');
+      if (select) {
+        Array.from(select.options).forEach((opt) => {
+          if (opt.value) opt.textContent = (factoryPresetNames.has(opt.value) ? '★ ' : '') + opt.value;
+        });
+      }
+      UpdateFactoryToggleButton();
+    }
+
+    // Reflects whether the *currently selected* preset is marked - not a live
+    // per-click toggle state, so this must be re-run any time currentPresetName
+    // or factoryPresetNames changes, not just on click.
+    function UpdateFactoryToggleButton() {
+      const btn = document.getElementById('factoryToggleBtn');
+      if (!btn) return;
+      const isFactory = currentPresetName && factoryPresetNames.has(currentPresetName);
+      btn.textContent = (isFactory ? '★' : '☆') + ' Factory';
+      btn.disabled = !currentPresetName;
+    }
+
+    // called from FirstSynth.cpp's OnWebContentLoaded(), only in Debug builds
+    // (see #ifdef _DEBUG there) - the Factory button starts hidden in the HTML
+    // itself, this is the only thing that ever reveals it, so a Release build
+    // never shows it at all (see the button's own HTML comment).
+    function SetDevBuild(isDev) {
+      const btn = document.getElementById('factoryToggleBtn');
+      if (btn) btn.style.display = isDev ? '' : 'none';
+      const oscPhaseSelect = document.getElementById('oscPhaseModeSelect');
+      if (oscPhaseSelect) oscPhaseSelect.style.display = isDev ? '' : 'none';
+    }
+
+    function ToggleCurrentPresetFactory() {
+      if (!currentPresetName) return;
+      SendPresetNameMessage(23 /* kMsgTagPresetToggleFactory */, currentPresetName);
+    }
+
+    // 2026-08-02, superseded 2026-08-25: this used to fall back to a browser-wide
+    // localStorage key when the <select> had no value of its own yet, so the
+    // label could survive a WebView reload. That guess was wrong in exactly the
+    // case that matters most: a freshly-inserted DAW instance, where it showed
+    // whatever preset was last loaded ANYWHERE in this host/product (a totally
+    // unrelated project, possibly), while the actual sound stayed the init patch
+    // - a real bug report ("5th Strings" shown, init-like sound actually playing).
+    // Replaced with an authoritative push from C++ (see kMsgTagCurrentPresetName's
+    // handler below, and mCurrentPresetName's own comment in FirstSynth.h) that
+    // can never disagree with the real sound, since C++ only ever sets it from an
+    // actual Load/Save.
 
     // Native <select>'s onchange never fires when the user re-picks the option
     // that's already selected - no value transition happened from the browser's
@@ -1554,7 +1598,7 @@
     function LoadPreset(name) {
       if (!name) return;
       currentPresetName = name;
-      localStorage.setItem(kLastPresetStorageKey, name);
+      UpdateFactoryToggleButton();
       SendPresetNameMessage(15 /* kMsgTagPresetLoad */, name);
 
       // 2026-08-01 bug report: a native <select> keeps keyboard focus after a
@@ -1583,6 +1627,7 @@
 
       SendPresetNameMessage(16 /* kMsgTagPresetDelete */, currentPresetName);
       currentPresetName = ''; // it's gone - Save must fall back to Save As now, not silently recreate it
+      UpdateFactoryToggleButton();
     }
 
     // wraps around at either end, like a typical hardware-synth patch browser
@@ -1604,14 +1649,12 @@
       const select = document.getElementById('presetSelect');
       if (!select) return;
 
-      // Falls back to the persisted last-loaded preset name (see
-      // kLastPresetStorageKey's own comment) only when the <select> genuinely has
-      // no value of its own yet - i.e. this very first sync after launch/reopen,
-      // before the user has touched the dropdown this session. Any later call
-      // (Save/Delete refresh, etc.) already has a real select.value and takes
-      // priority, same as before.
-      const targetValue = pendingPresetSelection !== null ? pendingPresetSelection
-        : (select.value || localStorage.getItem(kLastPresetStorageKey) || '');
+      // A pending Save/Delete target takes priority (see its own comment);
+      // otherwise fall back to whatever's already known to be genuinely current
+      // - currentPresetName, kept correct either by a live pick in this session
+      // or by the authoritative kMsgTagCurrentPresetName push from C++ (which
+      // may arrive before or after this list - see that handler's own comment).
+      const targetValue = pendingPresetSelection !== null ? pendingPresetSelection : currentPresetName;
       pendingPresetSelection = null;
 
       select.innerHTML = '';
@@ -1620,6 +1663,7 @@
         opt.value = '';
         opt.textContent = '(no presets saved)';
         select.appendChild(opt);
+        UpdateFactoryToggleButton();
         return;
       }
 
@@ -1633,13 +1677,17 @@
       // keep the target preset selected if it's actually in the refreshed list
       // (the common case: same preset as before, or the one just saved) rather
       // than resetting to the first entry
-      if (names.includes(targetValue)) {
+      if (targetValue && names.includes(targetValue)) {
         select.value = targetValue;
-        // keeps Save/Delete's own bookkeeping in sync when this restores the
-        // dropdown from kLastPresetStorageKey on a fresh load, not just a live
-        // pick - see currentPresetName's own comment
         currentPresetName = targetValue;
+      } else {
+        // nothing genuinely current yet (e.g. a brand new instance, before
+        // kMsgTagCurrentPresetName has arrived, or it arrived and said "none") -
+        // leave the dropdown honestly unselected rather than showing a guess.
+        select.selectedIndex = -1;
       }
+
+      ApplyFactoryMarkers(); // decorates the options just built, and updates the toggle button
     }
 
     // called from FirstSynth.cpp's OnWebContentLoaded() with config.h's
@@ -1757,6 +1805,12 @@
       // fallback for the (currently unconfirmed, but plausible) case of a host-
       // side/automation-driven change.
       UpdateLooperGaugeReverse(isOn);
+    }
+
+    // 5-Band EQ Bypass - same plain real-param toggle pattern as
+    // SetDelayPingPong() above (param 113, kParamEQBypass in FirstSynth.h).
+    function SetEQBypass(isOn) {
+      SPVFUI(113, isOn ? 1 : 0);
     }
 
     // Looper transport - state is NOT a plugin param (it's not something you'd want to
@@ -2130,7 +2184,12 @@
     }
 
     const kLFOShapeParams = [6, 31, 36, 70, 74]; // Pitch/Filter/Amp/Mod1/Mod2 LFO Shape
-    const kLFOSyncParams = [9, 34, 39, 73, 77];  // Pitch/Filter/Amp/Mod1/Mod2 LFO Sync
+    // 2026-08-25: also covers Delay's own Sync toggle (115) now - not actually
+    // LFO-specific machinery despite the name (SetSync()/UpdateRateKnobVisibility()
+    // below only ever look at param ids, never assume "LFO"), and renaming these
+    // 2 shared arrays would touch a lot of already-working code for no functional
+    // benefit - see kLFORateKnobsBySync's own comment for the same reasoning.
+    const kLFOSyncParams = [9, 34, 39, 73, 77, 115];  // Pitch/Filter/Amp/Mod1/Mod2 LFO Sync, Delay Sync
     const kMatrixEnumParams = [86, 87, 89, 90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 108]; // Matrix Source/Dest <select>s (Amount is a normal knob-control, doesn't need this)
     const kMatrixSourceParams = [86, 89, 92, 95, 98, 101, 104, 107]; // the Source half of each pair above - see UpdateTimeDestAvailability()
 
@@ -2167,7 +2226,28 @@
     // tempo-synced automation), show only the relevant one and hide the other,
     // toggled by Sync - reads as one unified knob that just changes what it
     // controls, no DSP/param changes needed.
-    const kLFORateKnobsBySync = { 9: [7, 8], 34: [32, 33], 39: [37, 38], 73: [71, 72], 77: [75, 76] }; // syncParamId -> [hzParamId, tempoParamId]
+    const kLFORateKnobsBySync = { 9: [7, 8], 34: [32, 33], 39: [37, 38], 73: [71, 72], 77: [75, 76], 115: [44, 114] }; // syncParamId -> [hzParamId, tempoParamId] (115: Delay Sync -> [Time ms, Time Tempo])
+
+    // 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's
+    // own comment in FirstSynth.h. No knob/param involved (just a per-voice
+    // runtime flag), so this just sends the message straight through.
+    function SetOscPhaseMode(fixed) {
+      SAMFUI(24 /* kMsgTagSetOscPhaseMode */, fixed, 0);
+    }
+
+    // 2026-08-26 bug fix (user report: "GUIをもう一度開くとFIXEDに戻ってしま
+    // います" - reopening the GUI shows Fixed again) - called from
+    // FirstSynth.cpp's OnWebContentLoaded() every time the WebView (re)loads,
+    // passing whatever the DSP's real current state actually still is. The
+    // WebView's HTML always restarts at the <select>'s hardcoded default
+    // option on reload, independent of the underlying C++/DSP state (which a
+    // mere GUI close/reopen never touches) - this just re-syncs the
+    // *display* to match, without re-sending the message back to C++ (that
+    // state's already correct there; this is UI-only catch-up).
+    function SetOscPhaseModeDisplay(fixed) {
+      const select = document.getElementById('oscPhaseModeSelect');
+      if (select) select.value = fixed;
+    }
 
     // param-id -> [band index 0-4, 'freq'|'gain'|'q'] for the 5-band EQ curve display -
     // feeds both OnParamChange (host-driven: initial load/preset recall) and each EQ
@@ -2200,6 +2280,22 @@
         return logMin * Math.pow(max / logMin, normValue);
       }
       return min + Math.pow(normValue, shapeExponent) * (max - min);
+    }
+
+    // Inverse of KnobNormalizedToReal() above, mirroring knob-control.js's own
+    // private realToNormalized() the same way that one mirrors
+    // normalizedToReal() - needed by the EQ curve display's point-dragging
+    // (2026-08-25): a drag produces a real Hz/dB value, but SPVFUI needs [0,1].
+    function KnobRealToNormalized(knobEl, realValue) {
+      const min = parseFloat(knobEl.getAttribute('min')) || 0;
+      const max = parseFloat(knobEl.getAttribute('max')) || 100;
+      const shape = knobEl.getAttribute('shape') || 'linear';
+      const shapeExponent = parseFloat(knobEl.getAttribute('shape-exponent')) || 1;
+      if (shape === 'log') {
+        const logMin = min <= 0 ? 0.00000001 : min;
+        return Math.log(realValue / logMin) / Math.log(max / logMin);
+      }
+      return Math.pow((realValue - min) / (max - min), 1 / shapeExponent);
     }
 
     // real (already-denormalized) value in, real value out - no further conversion here
@@ -2246,7 +2342,7 @@
         return;
       }
 
-      if (param === 47 || param === 51) {
+      if (param === 47 || param === 51 || param === 113) {
         document.querySelector(`input[data-param-id="${param}"]`).checked = value > 0.5;
         if (param === 51) UpdateLooperGaugeReverse(value > 0.5); // walker animation direction
         return;
@@ -2314,6 +2410,23 @@
               }
             });
 
+            // 2026-08-25 user request: double-clicking an EQ Gain knob (every
+            // knob-control already resets to its own default-value on
+            // dblclick, see knob-control.js's onDblClick()) should land on
+            // 0dB (flat/no boost-cut) specifically - a musically meaningful
+            // "neutral" target, not the same thing as kParamEQ*Gain's own
+            // InitDouble default in FirstSynth.cpp, which intentionally seeds
+            // a non-flat, already-tuned EQ curve as this synth's baseline
+            // patch identity (see that file's own comment). Only overrides
+            // the double-click *reset target* here - the real param's actual
+            // default (used for the initial patch, DAW automation's own
+            // "reset to default", etc.) is completely untouched.
+            Object.entries(kEQParamMap)
+              .filter(([, [, kind]]) => kind === 'gain')
+              .forEach(([paramId]) => {
+                document.querySelector(`knob-control[param-id="${paramId}"]`)?.setAttribute("default-value", "0");
+              });
+
             document.querySelectorAll('waveform-display').forEach((element) => {
               const paramInfo = json["params"][element.paramId];
               if (paramInfo) {
@@ -2374,6 +2487,37 @@
         // characters need real UTF8 decoding to come back out correctly.
         const text = new TextDecoder('utf-8').decode(buf);
         UpdatePresetList(text ? text.split('\n') : []); // "".split('\n') is ['']; not [] - guard for that
+      } else if (msgTag === 21 /* kMsgTagCurrentPresetName */) {
+        // Authoritative "what's actually loaded right now", from C++'s
+        // mCurrentPresetName - see this tag's own comment in FirstSynth.h for why
+        // this replaced a localStorage-based guess. No dataSize floor, same
+        // reasoning as kMsgTagPresetList - empty legitimately means "nothing
+        // loaded" (e.g. a brand new instance), not an error to ignore.
+        const bytes = window.atob(data);
+        const buf = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+        const name = new TextDecoder('utf-8').decode(buf);
+
+        currentPresetName = name;
+        const select = document.getElementById('presetSelect');
+        if (select) {
+          const hasOption = name && Array.from(select.options).some((o) => o.value === name);
+          if (hasOption) {
+            select.value = name;
+          } else {
+            select.selectedIndex = -1; // don't leave a stale/wrong option looking selected
+          }
+        }
+        UpdateFactoryToggleButton();
+      } else if (msgTag === 22 /* kMsgTagFactoryPresetList */) {
+        // '\n'-joined UTF8 names, same decoding/empty-is-valid reasoning as
+        // kMsgTagPresetList above - see factoryPresetNames' own comment.
+        const bytes = window.atob(data);
+        const buf = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+        const text = new TextDecoder('utf-8').decode(buf);
+        factoryPresetNames = new Set(text ? text.split('\n') : []);
+        ApplyFactoryMarkers();
       } else if (msgTag === 17 /* kMsgTagLicenceState */ && dataSize > 0) {
         licenceState = window.atob(data).charCodeAt(0);
         UpdateLockScreen();
@@ -2515,6 +2659,28 @@
     <button class="page-nav-btn" onclick="SaveCurrentPreset()" title="Overwrite the selected preset with the current settings">Save</button>
     <button class="page-nav-btn" onclick="PromptSavePreset()">Save As...</button>
     <button class="page-nav-btn" onclick="DeletePreset()" title="Delete the selected preset">Delete</button>
+    <!-- 2026-08-25 user request: mark/unmark the selected preset as "factory"
+         (工場出荷用) while developing with finished and work-in-progress presets
+         mixed in the same list - see kMsgTagFactoryPresetList's own comment in
+         FirstSynth.h. Label itself flips between the two glyphs in
+         ApplyFactoryMarkers() below, same idea as a checkbox rendered as a button.
+         Developer-only tool, not meant for a real end user's copy - hidden by
+         default (display:none) and only revealed by SetDevBuild(true), called
+         from OnWebContentLoaded() only in Debug builds (see FirstSynth.cpp).
+         Starting hidden (rather than starting visible and hiding it later) means
+         a Release build can never show it even briefly, e.g. if that call were
+         ever slow or failed for some reason. -->
+    <button class="page-nav-btn" id="factoryToggleBtn" onclick="ToggleCurrentPresetFactory()" title="Mark/unmark the selected preset as a factory preset" style="display: none;">&#9734; Factory</button>
+    <!-- 2026-08-26 user request: dev-only A/B toggle between the current
+         "fixed" oscillator phase behavior (reset to 0 on every note-on - the
+         existing, unconditional behavior) and "free" (phase left wherever it
+         was, matching typical free-running analog oscillator behavior) - see
+         kMsgTagSetOscPhaseMode's own comment in FirstSynth.h. Same hidden-by-
+         default/SetDevBuild(true) pattern as the Factory button above. -->
+    <select id="oscPhaseModeSelect" onchange="SetOscPhaseMode(parseInt(this.value))" title="Oscillator phase at note-on (dev-only A/B test)" style="display: none; margin-left: 8px;">
+      <option value="1">Phase: Fixed</option>
+      <option value="0">Phase: Free</option>
+    </select>
     <!-- computer-keyboard-as-MIDI (EnableComputerKeyboardInput()) is Standalone-only,
          so this dropdown is hidden by default and only revealed from that same
          Standalone-only entry point - see its own comment. margin-left separates it
@@ -2600,20 +2766,20 @@
     <div class="panel-filterenv">
       <h2>Filter ADSR</h2>
       <div class="knob-row">
-        <div class="knob-container"><knob-control label="Attack" param-id="27" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
-        <div class="knob-container"><knob-control label="Decay" param-id="28" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Attack" param-id="27" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Decay" param-id="28" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
         <div class="knob-container"><knob-control label="Sustain" param-id="29" units="%"></knob-control></div>
-        <div class="knob-container"><knob-control label="Release" param-id="30" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Release" param-id="30" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
       </div>
     </div>
 
     <div class="panel-ampenv">
       <h2>Amp / ADSR</h2>
       <div class="knob-row">
-        <div class="knob-container"><knob-control label="Attack" param-id="2" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
-        <div class="knob-container"><knob-control label="Decay" param-id="3" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Attack" param-id="2" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Decay" param-id="3" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
         <div class="knob-container"><knob-control label="Sustain" param-id="4" units="%"></knob-control></div>
-        <div class="knob-container"><knob-control label="Release" param-id="5" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+        <div class="knob-container"><knob-control label="Release" param-id="5" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
       </div>
     </div>
 
@@ -2782,7 +2948,22 @@
       <div class="panel-delay">
         <h2>Delay</h2>
         <div class="knob-row">
-          <div class="knob-container"><knob-control label="Time" param-id="44" units="ms" shape-exponent="2"></knob-control></div>
+          <!-- 2026-08-25 user request: tempo-sync, same Rate(Hz)/Rate(Tempo)/Sync
+               pattern the LFOs already use - see kParamDelayTimeTempo's own
+               comment in FirstSynth.h. Reuses the existing generic SetSync()/
+               kLFOSyncParams/kLFORateKnobsBySync machinery as-is (just extended
+               with this param's ids), not a Delay-specific copy of it. -->
+          <div class="rate-knob-slot">
+            <div class="knob-container"><knob-control label="Time" param-id="44" units="ms" shape-exponent="2"></knob-control></div>
+            <div class="knob-container"><knob-control label="Time" param-id="114" value-labels="1/64|1/32|1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4|1/4D|1/2|1/1|2/1|4/1|8/1"></knob-control></div>
+          </div>
+          <div class="toggle-container">
+            <span class="toggle-label">Sync</span>
+            <label class="switch">
+              <input type="checkbox" data-param-id="115" onchange="SetSync(115, this)">
+              <span class="slider"></span>
+            </label>
+          </div>
           <div class="knob-container"><knob-control label="Feedback" param-id="45" units="%"></knob-control></div>
           <div class="knob-container"><knob-control label="Mix" param-id="46" units="%"></knob-control></div>
           <div class="toggle-container">
@@ -2821,7 +3002,21 @@
           </div>
         </div>
         <div id="peqLockedContent">
-          <h2>5-Band EQ</h2>
+          <!-- 2026-08-25 user request: a Bypass switch, placed in the unlocked
+               panel content alongside the header - lets the user A/B the EQ's
+               effect without resetting any of its band settings. Own real
+               param (kParamEQBypass, see FirstSynth.h), not a display-only
+               toggle like PEQ LOCK above. -->
+          <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px;">
+            <h2 style="margin: 0;">5-Band EQ</h2>
+            <div class="toggle-container">
+              <span class="toggle-label">Bypass</span>
+              <label class="switch">
+                <input type="checkbox" data-param-id="113" onchange="SetEQBypass(this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
           <eq-curve-display id="eqCurveDisplay"></eq-curve-display>
           <div class="knob-row eq-band-row">
             <div class="eq-band-col">
@@ -2943,20 +3138,20 @@
       <div class="panel-modenv1">
         <h2>Mod Env 1</h2>
         <div class="knob-row">
-          <div class="knob-container"><knob-control label="Attack" param-id="78" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
-          <div class="knob-container"><knob-control label="Decay" param-id="79" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Attack" param-id="78" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Decay" param-id="79" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
           <div class="knob-container"><knob-control label="Sustain" param-id="80" units="%"></knob-control></div>
-          <div class="knob-container"><knob-control label="Release" param-id="81" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Release" param-id="81" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
         </div>
       </div>
 
       <div class="panel-modenv2">
         <h2>Mod Env 2</h2>
         <div class="knob-row">
-          <div class="knob-container"><knob-control label="Attack" param-id="82" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
-          <div class="knob-container"><knob-control label="Decay" param-id="83" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Attack" param-id="82" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Decay" param-id="83" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
           <div class="knob-container"><knob-control label="Sustain" param-id="84" units="%"></knob-control></div>
-          <div class="knob-container"><knob-control label="Release" param-id="85" units="ms" shape-exponent="3" max-digits="4"></knob-control></div>
+          <div class="knob-container"><knob-control label="Release" param-id="85" units="ms" shape-exponent="3.9434164716336326" max-digits="4"></knob-control></div>
         </div>
       </div>
     </div>
@@ -3381,6 +3576,55 @@
     document.querySelector(`knob-control[param-id="${paramId}"]`)?.addEventListener('user-change', (e) => {
       UpdateEQCurve(parseInt(paramId), e.detail.finalValue);
     });
+  });
+
+  // 2026-08-25 user request: dragging a point on the EQ curve itself, not just
+  // its knobs, now moves that band's Freq (x) and Gain (y) - the reverse of
+  // the knob->curve wiring right above. band -> paramId lookup, inverting
+  // kEQParamMap (defined above) rather than hand-duplicating it a second time.
+  const kEQBandToParamIds = {};
+  Object.entries(kEQParamMap).forEach(([paramId, [band, kind]]) => {
+    if (kind === 'freq' || kind === 'gain') {
+      kEQBandToParamIds[band] = { ...kEQBandToParamIds[band], [kind]: parseInt(paramId) };
+    }
+  });
+
+  const eqCurveDisplayEl = document.getElementById('eqCurveDisplay');
+  eqCurveDisplayEl?.addEventListener('point-drag-start', (e) => {
+    const ids = kEQBandToParamIds[e.detail.band];
+    if (!ids || typeof window['BPCFUI'] !== 'function') return;
+    window['BPCFUI'](ids.freq);
+    window['BPCFUI'](ids.gain);
+  });
+  eqCurveDisplayEl?.addEventListener('point-drag-end', (e) => {
+    const ids = kEQBandToParamIds[e.detail.band];
+    if (!ids || typeof window['EPCFUI'] !== 'function') return;
+    window['EPCFUI'](ids.freq);
+    window['EPCFUI'](ids.gain);
+  });
+  eqCurveDisplayEl?.addEventListener('point-drag', (e) => {
+    const { band, freq, gainDb } = e.detail;
+    const ids = kEQBandToParamIds[band];
+    if (!ids) return;
+
+    const freqKnob = document.querySelector(`knob-control[param-id="${ids.freq}"]`);
+    const gainKnob = document.querySelector(`knob-control[param-id="${ids.gain}"]`);
+    // updateValueFromHost (not the plain drag path) - moves the knob's own
+    // pointer/label to match without it re-dispatching 'user-change' (which
+    // would just call UpdateEQCurve() right back with the same data this
+    // drag already applied directly to the curve's own state). SPVFUI is
+    // still sent explicitly below - updateValueFromHost's fromHost=true
+    // deliberately skips that part.
+    if (freqKnob) {
+      const normFreq = KnobRealToNormalized(freqKnob, freq);
+      if (typeof window['SPVFUI'] === 'function') window['SPVFUI'](ids.freq, normFreq);
+      freqKnob.updateValueFromHost(normFreq);
+    }
+    if (gainKnob) {
+      const normGain = KnobRealToNormalized(gainKnob, gainDb);
+      if (typeof window['SPVFUI'] === 'function') window['SPVFUI'](ids.gain, normGain);
+      gainKnob.updateValueFromHost(normGain);
+    }
   });
 
   // Master Gain is mirrored on both the Synth page (masterGainKnob) and the

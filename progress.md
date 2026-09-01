@@ -10,6 +10,15 @@ whether that's Claude or the user themselves.
   the framework checkout). Both must stay directly under `CLAP_plugin\` — the vcxproj files
   were patched to use `..\..\iPlug2\...` relative paths (2 levels up + iPlug2), not iPlug2's
   default `..\..\..\` (which assumes `Examples\ProjectName\projects\` nesting).
+- **The iPlug2 checkout is a modified fork**, not stock upstream. As of 2026-08-29 it lives at
+  the private repo `github.com/waki-loveburger/iPlug2` (remotes in that checkout: `origin` =
+  that fork, `upstream` = `iPlug2/iPlug2`). On a fresh machine:
+  `git clone https://github.com/waki-loveburger/iPlug2 C:\Users\a_wak\CLAP_plugin\iPlug2`.
+  Local changes on top of upstream (ADSR `SetAttackShape`, LFO S&H, WASAPI driver, Standalone
+  Save/Load Preset + DPI fixes, VST3 DPI + per-product WebView2 cache isolation, WebView2
+  environment reuse, Release-build `index.html` resolution) — see that repo's `git log`
+  `upstream/master..master`. Every `CLAP_plugin\` sibling (SuiKinKutsu, GrainField, Compost,
+  UeberLooper, Chaoscape) compiles against this same checkout.
 - Code-level project name: `FirstSynth`. Manufacturer placeholder: `AcmeInc`. Display name
   (`PLUG_NAME` in config.h): "1st synth".
 - Stack: iPlug2 + WebView UI (HTML/CSS/JS in `resources/web/`). DSP hand-written in
@@ -4746,8 +4755,68 @@ Signature, Technical Contact (same name, Kyoto address, phone
 +81 80-6760-8198, email easyandnice@ymail.ne.jp). **Now waiting on
 Steinberg's countersigned copy** — dev/test use of ASIO is fine in the
 meantime, but still don't ship an ASIO-enabled build to customers until the
-countersigned copy actually comes back. If no reply after ~2 weeks, follow up
-by replying to the same email thread.
+countersigned copy actually comes back. Followed up once (~2 weeks later,
+same email thread) - still no reply as of the last check.
+
+**2026-08-30 update: this delay is very likely a systemic Steinberg-side
+backlog, not a mistake on our end.** Checked Steinberg's forums
+(`forums.steinberg.net`) and found two independent threads confirming the
+same pattern: "No response to Proprietary ASIO SDK License Agreement
+submission" (submitted July 25, followed up Aug 6, still no reply as of that
+post) and "ASIO SDK Licensing Agreement Question" (a different developer who
+also emailed Steinberg directly and got no response, ~1 day before this
+check). Also checked Steinberg's Help Center
+(`helpcenter.steinberg.de`) — its "Contact support" ticket flow is scoped to
+registered end-user product support (Cubase/Nuendo/hardware, requires a
+MySteinberg-registered product) and has no SDK/developer-licensing category,
+so filing a ticket there is unlikely to reach the right team - **not
+recommended as a next step**. Best current plan: keep waiting (plausible
+cause is the post-Oct-2025 relicensing surge overwhelming a small licensing
+team), periodically check that forum thread for signs the backlog is
+clearing, and only send another follow-up email after a longer gap rather
+than escalating channels.
+
+**RESOLVED 2026-08-19/2026-08-30: ASIO proprietary license is now fully
+executed.** Steinberg's reply had actually arrived 2026-08-19 (sent by
+"Svantje", Management Assistant, from a personal address rather than
+reception@steinberg.de - landed in the spam folder and was missed until this
+check) with the countersigned PDF attached. Verified by rendering the
+countersigned copy's page 8: Steinberg's side now shows **Date executed
+13.08.2026** and a handwritten signature from Clyde Sendke (Managing
+Director); Licensee side unchanged from what was sent. **The ASIO proprietary
+SDK license agreement between Steinberg and EASYANDNICE INSTRUMENTS is
+complete — ASIO-enabled builds can now be distributed to customers.** Final
+countersigned copy saved at
+`C:\Users\a_wak\OneDrive\デスクトップ\easyandnicewaki\private\VSTとASIOについて\ASIO_LicensingAgreement_EASYANDNICE_NSTRUMENTS_Japan_August2026  Approved.pdf`
+- keep this file permanently, it's the actual legal record. **Lesson for any
+future Steinberg correspondence**: their reply may come from a named staff
+member's personal address rather than the department alias you emailed
+(reception@steinberg.de here) - check spam/junk folders by content, not just
+by expected sender, if a reply seems overdue.
+
+**IMPORTANT — mandatory ASIO attribution requirement found in the signed
+agreement's §3 (2026-08-30), stricter than the general SDK README's "optional"
+framing:** now that this proprietary agreement is signed and FirstSynth is
+distributed as an "ASIO Driver Compliant Product", §3.1 makes displaying
+"ASIO" + Steinberg's copyright notice **mandatory**, not optional. Must appear
+in at least one of: an About Box, a startup/splash screen, or bundled
+documentation. Exact required copyright notice text (§3.1.k, verbatim):
+**"ASIO is a trademark of Steinberg Media Technologies GmbH, registered in
+Europe and other countries."** Also: any webpage mentioning "ASIO" (e.g. a
+feature list on easyandnicewaki.com) needs the same notice; "ASIO" must never
+appear in the product/company's own name itself (only descriptive phrases
+like "ASIO compatible" in plain, unstyled text); don't claim ASIO support
+where it doesn't exist; don't redistribute the raw SDK. **DONE (2026-08-30): satisfied via the "bundled documentation" option**
+(least visible of the 3 compliant placements - matches this project's own
+"don't surface internal plumbing in the UI" convention, see the
+PEQ-not-user-facing precedent in [[project-firstsynth-clap-plugin]]) - added
+an "ASIO" section to `THIRD-PARTY-NOTICES.txt` right alongside the existing
+VST3 MIT section, with the exact required copyright notice text and a
+reference to the signed agreement. No UI or website change was needed. If
+this product's website (easyandnicewaki.com) copy ever explicitly advertises
+"ASIO support" as a feature, that specific page would separately need the
+same notice too (§3.1.c) - not yet an issue since the site doesn't currently
+call out ASIO by name, but keep this in mind if that copy changes.
 fixed and the true required content width is known.
 
 ## Preset browser: Save (overwrite) + Delete added, ported back from SuiKinKutsu (2026-07-30)
@@ -6221,3 +6290,965 @@ worth doing (and checking each project's own UI-zoom-feature code, if any,
 for the same `kMsgTagSetUIScale`-style raw-PLUG_WIDTH pattern FirstSynth had)
 next time any of them is worked on - not done proactively this session since
 it wasn't asked for.
+
+## 2026-08-25 — Preset dropdown showed a leftover name ("5th Strings") while the actual sound was the init patch
+
+**User report**: loading FirstSynth fresh in a DAW showed "5th Strings" in
+the preset dropdown, but the actual sound was close to the init patch - name
+and sound disagreed.
+
+**Root cause**: the WebView preset dropdown (`index.html`) fell back to a
+browser-wide `localStorage` key (`kLastPresetStorageKey`, written by
+`LoadPreset()` every time *any* preset was loaded, *anywhere*) whenever the
+`<select>` had no value of its own yet - i.e. every fresh WebView page load,
+which happens on every editor GUI open (VST3/CLAP hosts fully tear down and
+recreate the WebView on each open/close - confirmed via `IPlugWebView_win.cpp`'s
+`CloseWebView()`/`mWebViewCtrlr->Close()`). That guess was purely cosmetic -
+it set the dropdown's displayed selection but never told C++ to actually load
+anything. A brand-new VST3/CLAP instance has no restore mechanism at all
+(`LoadAutoState()` is `#ifdef APP_API` - Standalone only), so a fresh insert
+into a DAW project genuinely starts at the init patch while the label showed
+whatever preset was last loaded in *any* FirstSynth instance on that host
+(possibly a completely different project, possibly hours earlier).
+
+**Considered and rejected**: auto-loading the guessed name for real (so label
+and sound would always match) - this looked like the obvious fix but is
+actually dangerous. Since closing/reopening the editor GUI on an *existing*,
+already-correctly-loaded instance also re-triggers this same fresh-WebView-page
+code path, auto-loading on that path would have silently discarded the real
+current state (host-restored params, or live tweaks since the GUI was last
+open) and replaced it with some old preset file's contents - a much worse bug
+than a mislabeled dropdown, just from clicking to reopen the plugin window.
+
+**Actual fix**: stopped guessing. `mCurrentPresetName` (new `WDL_String`
+member, `FirstSynth.h`/`.cpp`) is now the single source of truth, updated only
+by a real `LoadPresetByName()`/`SavePresetAs()`/`DeletePresetByName()` on
+*this* instance - never by a WebView reload. Pushed to the UI via a new
+`kMsgTagCurrentPresetName` message (C++ -> UI, UTF8, sent from
+`OnWebContentLoaded()` via `SendCurrentPresetName()`), appended to `EMsgTags`
+per this project's "never renumber" convention. `index.html`'s
+`UpdatePresetList()` no longer reads `localStorage` at all - the dropdown
+shows nothing selected until this authoritative name arrives, so it can never
+disagree with the real sound again. `kLastPresetStorageKey` removed entirely
+(dead code once nothing read it).
+
+Since `mCurrentPresetName` lives only in memory (deliberately *not* added to
+`SerializeState()`'s own chunk - that chunk's binary layout is shared
+byte-for-byte with real DAW project state and every `*.preset` file, and this
+project has been bitten by exactly that kind of layout mismatch before), it
+correctly:
+- stays blank on a genuinely fresh instance (matches the init-patch sound - the
+  original bug, fixed)
+- survives a GUI close/reopen on an already-running instance (the C++ object
+  isn't destroyed when the WebView is, so the label stays honest across that
+  too, not just on first open)
+- has no way to leak across instances/projects/hosts, unlike the old
+  localStorage approach
+
+To keep the one working part of the old behavior - a Standalone relaunch
+recalling its last preset's *name*, not just its sound - `SaveAutoState()`/
+`LoadAutoState()` (Standalone-only, `#ifdef APP_API`) now also write/read a
+tiny sidecar text file, `autosave_presetname.txt`, right next to
+`autosave.state`. Deliberately a separate file rather than appending to
+`autosave.state`'s own chunk, same byte-layout-safety reasoning as above.
+
+**Build**: Standalone, VST3, and CLAP (Debug|x64) all rebuilt clean, 0
+errors, after closing BespokeSynth to release the file lock.
+
+**Not yet done**: not re-verified live in a DAW yet (or Standalone) - next
+step is inserting a fresh instance and confirming the dropdown shows nothing
+selected (not a wrong name), then Save/Load/Delete and a GUI close+reopen to
+confirm the label still tracks correctly through those.
+
+## 2026-08-25 — "Factory" preset marking, for developing with shipped and work-in-progress presets mixed together
+
+**User request** (prompted by the previous entry's discussion of what a new
+subscriber's preset list would look like today - currently empty, since
+nothing seeds `%APPDATA%\FirstSynth\Presets\` on first run): be able to keep
+developing with finished ("1軍"/factory) and work-in-progress ("2軍") presets
+mixed in the same folder/dropdown, while being able to tell them apart, so a
+future packaging step can pick out just the factory ones.
+
+**Design**: a small sidecar text file, `<GetPresetsDir()>\_factory.txt`, one
+sanitized preset name per line - deliberately not touching the `.preset`
+files' own binary format (same reasoning as `mCurrentPresetName`'s own sidecar
+file two entries up). The leading underscore keeps it out of
+`SendPresetList()`'s enumeration (already filtered to the `.preset`
+extension), so it lives right alongside the real presets without ever
+appearing as one itself.
+
+**C++** (`FirstSynth.h`/`.cpp`): `GetFactoryMarksPath()`, file-local
+`ReadFactoryMarks()`/`WriteFactoryMarks()` helpers, `SendFactoryPresetList()`
+(pushes the sidecar's contents via new message `kMsgTagFactoryPresetList`),
+`TogglePresetFactoryMark()` (sanitizes, flips membership, persists, refreshes
+UI - wired to new UI->C++ message `kMsgTagPresetToggleFactory`). Both messages
+appended to `EMsgTags` per this project's "never renumber" convention.
+`DeletePresetByName()` now also strips a deleted preset from the marks file if
+present, same spirit as its existing `mCurrentPresetName` cleanup right next
+to it.
+
+**UI** (`resources/web/index.html`): new "☆ Factory" / "★ Factory" toggle
+button in the preset bar, next to Delete - click sends the currently-selected
+preset's name via `kMsgTagPresetToggleFactory`. `factoryPresetNames` (a `Set`,
+populated by the new message's handler) drives `ApplyFactoryMarkers()`, which
+prefixes marked entries with "★ " in the dropdown's option labels - called
+after `UpdatePresetList()` rebuilds the list and after the factory-list
+message itself arrives (either can land first, both call it). The button's own
+label/disabled state is kept in sync via `UpdateFactoryToggleButton()`, called
+from every place `currentPresetName` changes (`LoadPreset()`, `DeletePreset()`,
+the `kMsgTagCurrentPresetName` handler, and the empty-list early-return path in
+`UpdatePresetList()`).
+
+**Not yet done**: the actual packaging/installer step that would read
+`_factory.txt` and seed a new user's Presets folder from just those files -
+out of scope for this request (see the previous entry's "BEFORE DISTRIBUTION
+CHECKLIST" - no installer pipeline exists yet at all). This just adds the
+marking mechanism a future packaging step will read from.
+
+**Build**: Standalone, VST3, and CLAP (Debug|x64) all rebuilt clean, 0 errors.
+
+**Not yet verified live**: needs a manual check in Standalone - open, pick a
+preset, click the Factory toggle, confirm the label/star updates and
+`_factory.txt` gets written in `%APPDATA%\FirstSynth\Presets\`, reload the
+list (e.g. via Save As on a different preset) and confirm the mark survives.
+
+## 2026-08-25 — Release-mode GUI never opened on Windows, root cause fixed (shared iPlug2 framework)
+
+**Context**: while discussing the previous entry's "Factory preset" feature
+(only meant to be visible during development, not in what ships), realized
+hiding it for a real distributed build would need a working Release build to
+even test against - and this project's own [[feedback_iplug2_webview_windows_release.md]]
+memory said Release-mode WebView Standalone builds don't load their GUI at
+all on Windows. User confirmed this bug itself was the more urgent thing to
+fix first.
+
+**Root cause** (`IPlug/Extras/WebView/IPlugWebViewEditorDelegate.h`'s
+`LoadIndexHtml()`, shared iPlug2 framework, affects every WebView-based
+project on this machine, every format): Debug builds resolve `index.html`
+from a path baked in at compile time via `__FILE__` (fine on the compiling
+machine only). Release builds fell through to `LoadFile("index.html",
+bundleid)` - a bare filename with no directory. Windows' own
+`IWebViewImpl::LoadFile()` (`IPlugWebView_win.cpp`) never actually uses the
+`bundleID` parameter at all (that's a macOS/iOS-only resolution path) - it
+derives the resources folder purely from whatever directory is embedded in
+the filename string itself. A bare filename has no directory, so the
+resolved folder was empty and WebView2 showed ERR_FILE_NOT_FOUND - the GUI
+never opened, in any Release-configuration build, on every format
+(Standalone/VST3/CLAP/...), confirming and root-causing what the earlier
+memory only worked around by "always build Debug."
+
+**Fix**:
+- New `GetCurrentModuleDirWin()` (`IPlugWebView_win.cpp`) - resolves the
+  folder containing whichever module (.exe for Standalone, the .vst3/.clap
+  DLL for the others) this code is actually compiled into, at runtime, via
+  `GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, ...)` on its
+  own function address - no per-format special-casing needed, unlike the
+  old dev-machine-only `__FILE__` approach.
+- `LoadIndexHtml()` now has a third branch (`#elif defined OS_WIN`, between
+  the existing Debug and non-Windows-Release branches): builds a real path,
+  `<moduleDir>\Resources\web\index.html`, from that and passes it to
+  `LoadFile()` - same mechanism the Debug branch already relies on, just
+  computed at runtime instead of compile time.
+- `scripts/postbuild-win.bat` now actually copies `resources\web\*` next to
+  every built binary - `Resources\web\` alongside the Standalone .exe in
+  `%BUILD_DIR%`, inside the VST3 bundle's `Contents\x86_64-win\Resources\web\`
+  (before the bundle gets xcopied to the real VST3 install path, so it comes
+  along automatically), and next to the installed .clap in
+  `%CLAP_X64_PATH%\Resources\web\`. This was the other missing half - the
+  code fix alone had nothing to copy from without this. Mirrored for the
+  ARM64EC platform block too (untested on this machine, but kept consistent).
+
+**Verified**: rebuilt all 3 formats in Release|x64 - 0 errors, and each
+postbuild run logged its new "copying WebView resources..." line. Confirmed
+`Resources\web\index.html` actually landed in all 3 real locations
+(`build-win\Resources\web`, the VST3 bundle at both the staging path and
+`C:\Program Files\Common Files\VST3\FirstSynth.vst3\...`, and
+`%LOCALAPPDATA%\Programs\Common\CLAP\Resources\web`). Launched the Release
+Standalone .exe and captured its window via `PrintWindow` (no focus-stealing,
+same technique as the 2026-08-24 eni_auth lock-screen check) - **GUI renders
+correctly**: full Synth page, Zoom 80%, Preset "Organ2" correctly recalled,
+the new Factory toggle button visible. VST3/CLAP weren't visually confirmed
+in a real DAW this session (no GUI automation available for that), but the
+underlying mechanism is identical and the resource files are confirmed
+correctly placed - low risk.
+
+Rebuilt all 3 formats back in Debug|x64 afterward to leave the normal dev
+config as the current build-win state (Debug still works unaffected - it
+still takes the original `__FILE__`-based branch, untouched by this fix).
+
+**Not yet done**: [[feedback_iplug2_webview_windows_release.md]] should be
+updated/superseded now that a real fix exists (currently still says "build
+Debug, not Release" as the only workaround). Same shared-framework situation
+as the 2026-08-18 DPI fix - SuiKinKutsu/GrainField/Compost/Chaoscape/
+UeberLooper all share this exact iPlug2 checkout, so this fix already applies
+to them too, but each project's own `postbuild-win.bat` still needs the same
+resource-copying addition (that part is project-specific, not shared) before
+any of them could actually ship a working Release build.
+
+## 2026-08-25 — Factory toggle button hidden from Release builds
+
+Follow-up to the Release-mode GUI fix above, completing the original request:
+the "Factory" preset-marking button is a developer-only tool, not something a
+real end user's copy should show.
+
+**Implementation**: `index.html`'s `#factoryToggleBtn` now starts
+`display: none` in the markup itself (not just disabled) - starting hidden
+and only ever being *revealed* is safer than starting visible and hiding it
+later, since a Release build can then never show it even briefly if the
+reveal call were ever slow/failed. New JS function `SetDevBuild(isDev)` sets
+`style.display`. `FirstSynth.cpp`'s `OnWebContentLoaded()` calls it right
+after `SendFactoryPresetList()`, with the boolean baked in via `#ifdef
+_DEBUG` (true) / `#else` (false) - so it's the actual MSBuild Configuration
+that decides, same signal `LoadIndexHtml()` itself already keys off.
+
+**Verified live** (Standalone, `PrintWindow` screenshots, same technique as
+above): Debug build shows the button in the preset bar; the real packaged
+Release build (`build-win\FirstSynth_x64.exe` - not the raw MSBuild output
+copy at `build-win\app\x64\Release\FirstSynth.exe`, which has no
+`Resources\web` next to it and correctly shows a WebView2 network-error page
+if launched directly instead) shows a normal preset bar with no Factory
+button, GUI otherwise fully working. VST3/CLAP Release also rebuilt clean
+(0 errors) with the same change, not re-screenshotted (same code path as
+Standalone, already covered above). All 3 formats rebuilt back to Debug
+afterward to leave the normal dev config in place.
+
+## 2026-08-25 — Debug and Release Standalone builds were silently overwriting each other
+
+**User report**: launched Standalone themselves, saw no Factory button, asked
+whether that meant this was actually a Release build, and asked for a way to
+switch between the two.
+
+**Root cause**: `postbuild-win.bat` copied both Debug and Release Standalone
+builds to the exact same filename, `build-win\FirstSynth_x64.exe` - whichever
+config was built most recently silently overwrote the other. Earlier the same
+session, verifying the Release-mode GUI fix meant Release was built last,
+leaving that overwriting the Debug copy the user then double-clicked -
+confirmed via `tasklist` that the process the user had running was that stale
+Release copy.
+
+**Fix**: `config/FirstSynth-win.props`'s postbuild `CALL` now passes
+`"$(Configuration)"` as an extra trailing argument; `postbuild-win.bat` reads
+it (`CONFIGURATION`) and copies Release to a distinctly-named
+`%NAME%_%PLATFORM%_Release.exe` instead, leaving Debug's filename exactly as
+it always was (`FirstSynth_x64.exe`) so the user's existing muscle memory and
+tooling (`CPU_Monitor.bat`) keep working unchanged. Both `.exe` blocks
+(ARM64EC and x64 platform sections) updated identically. Shared by all 5
+formats' vcxproj (`config/FirstSynth-win.props` is imported by all of them),
+but only `.exe` (Standalone) actually branches on it - VST3/CLAP/etc. still
+just install to one fixed path each, matching how any real DAW plugin folder
+already works (no equivalent ambiguity to resolve there).
+
+**Verified**: rebuilt Debug then Release - confirmed via the postbuild log's
+own echo line that each copies to the right distinct filename, and via
+`PrintWindow` screenshots of each launched separately (both exes exist
+simultaneously in `build-win\`, but only one can run at a time - some kind of
+single-instance/audio-device lock, unrelated to this fix) - Debug
+(`FirstSynth_x64.exe`) shows the Factory button, Release
+(`FirstSynth_x64_Release.exe`) doesn't, GUI otherwise identical and working
+in both.
+
+**How to apply going forward**: after testing a Release build for any
+reason, no need to rebuild Debug back over it anymore - both filenames now
+coexist, so the user's normal `FirstSynth_x64.exe` double-click always stays
+whatever was last built *as Debug*, regardless of any Release builds done in
+between.
+
+Two desktop shortcuts added (user request, "使い分けできるように"):
+"FirstSynth（開発版）" -> `build-win\FirstSynth_x64.exe`, "FirstSynth（Release版）"
+-> `build-win\FirstSynth_x64_Release.exe`. Point at the build output paths
+directly, so they always reflect whatever's most recently built there - no
+need to recreate them after a rebuild.
+
+`tools\cpu_monitor.ps1` also updated (follow-up question: which one is the
+CPU meter tied to - turned out neither, confirmed via `Get-Process -Name
+"FirstSynth"` returning nothing for either renamed exe). Was doing an exact
+`-Name "FirstSynth"` match, which stopped working the moment Debug/Release
+split into different filenames (Windows process names always match the
+launched exe's own filename). Changed to a `"FirstSynth*"` wildcard picking
+whichever one is actually running (`Select-Object -First 1`), and the label
+now shows the real matched process name (e.g. "FirstSynth_x64" vs
+"FirstSynth_x64_Release") instead of a hardcoded "FirstSynth", so it's
+visible at a glance which build is being watched. Also resets the running
+CPU-delta tracking when the matched process's PID changes between ticks
+(e.g. closing Debug and opening Release) - comparing `TotalProcessorTime`
+across two unrelated processes would have produced a meaningless number
+otherwise. Verified live: launched Release, confirmed the monitor showed
+"FirstSynth_x64_Release : N%"; closed it, launched Debug, confirmed it
+switched to "FirstSynth_x64 : N%".
+
+## 2026-08-25 — EQ Bypass switch, draggable curve points, bigger points
+
+Three related user requests about the 5-band parametric EQ panel.
+
+**Bypass switch**: new `kParamEQBypass` param (appended to `EParams`, real
+enum value 113 - confirmed by counting entries, since none of them have
+explicit numbers), `mEQBypassed` bool in `FirstSynth.h`/`.cpp` set directly
+from `OnParamChange` (same non-atomic convention this file's other simple
+effect toggles already use) and checked in `ProcessBlock()`:
+`if (!mEQBypassed) mEQ.Process(...)`. UI: a "Bypass" toggle switch
+(`index.html`, `SetEQBypass()`) placed next to the "5-Band EQ" heading inside
+`#peqLockedContent` - i.e. only reachable once PEQ LOCK is opened, per the
+user's own framing of the request. `param === 47 || param === 51` generic
+checkbox-sync branch in `OnParamChange` (JS) extended to also cover 113.
+
+**Draggable + bigger curve points** (`eq-curve-display.js`): the per-band
+markers were a pure readout before - `POINT_RADIUS` bumped 3->6 (bigger, per
+request), doubling as `POINT_HIT_RADIUS` (11, in the same canvas-internal
+600x150 coordinate space the points are drawn in) for a pointerdown hit-test.
+Dragging updates the curve's own `freq[band]`/`gainDb[band]` and redraws
+live, clamped to the chart's `MIN_FREQ/MAX_FREQ` (20-20000, matches the real
+`InitFrequency` range exactly) and a separate `PARAM_MIN_DB/MAX_DB` (-15/15,
+the real `InitDouble` Gain range - narrower than the chart's own -18/18 axis,
+which is intentionally wider so a maxed-out band doesn't render right at the
+edge). Dispatches `point-drag-start`/`point-drag`/`point-drag-end` (all on
+`this`, the host element, so no `composed:true` needed - same as
+knob-control.js's own 'user-change' event).
+
+**Reverse wiring** (`index.html`): new `kEQBandToParamIds` (band -> {freq,
+gain} paramId, built once by inverting the existing `kEQParamMap`), new
+`KnobRealToNormalized()` (exact inverse of the existing `KnobNormalizedToReal()`,
+mirroring knob-control.js's own private `realToNormalized()` formula) - the
+`point-drag` listener converts the drag's real Hz/dB back to normalized,
+sends it via `SPVFUI()` (guarded with `typeof === 'function'`, unlike this
+file's plain onclick handlers - matters for the file:// test harness below),
+and calls the corresponding knob-control's `updateValueFromHost()` so the
+knob's own dial/label stay in sync without re-triggering `UpdateEQCurve()`
+in a redundant loop. `point-drag-start`/`-end` pair `BPCFUI`/`EPCFUI` around
+the whole gesture (both freq and gain), matching the same "begin/end gesture"
+contract knob-control.js's own drag already follows, so DAW automation-lane
+recording sees one gesture per point-drag, not a value-per-pixel storm.
+
+**Verification**: C++ compiled clean (all 3 formats, Debug). For the JS
+(can't be exercised by a C++ build, and this repo lives outside the current
+session's working directory so the Browser pane's `file://` preview would
+only render a static, non-executing snapshot - see
+[[feedback_cross_sandbox_file_delivery]]-adjacent caveat) - started a
+throwaway local HTTP server (`python -m http.server`, via a temporary
+`.claude/launch.json`, removed after) rooted at `resources/web`, opened it in
+the Browser pane, and drove it directly:
+- Unlocked PEQ LOCK via a real click - confirmed `#peqLockedContent` becomes
+  visible and the Bypass checkbox (`data-param-id="113"`) exists with the
+  right wiring.
+- Confirmed `EQCurveDisplay.POINT_RADIUS === 6` / `POINT_HIT_RADIUS === 11`.
+- Dispatched real `PointerEvent` sequences (down/move/up) at a band's exact
+  on-canvas position, for two different bands - confirmed `freq[band]`/
+  `gainDb[band]` moved in the correct direction each time (right/up = higher
+  freq/gain, left/down = lower) and landed within the clamped range, with
+  zero console errors once `SPVFUI`/`BPCFUI`/`EPCFUI` were stubbed to no-ops
+  (this bare-HTTP-server test page has no real WebView2 host, so those
+  bridge functions exist but throw internally calling the host-injected
+  `IPlugSendMsg` - confirmed that's exactly what threw before stubbing, not
+  a bug in this feature).
+- Couldn't fully number-verify the knob-mirroring side (`updateValueFromHost`)
+  in this harness specifically, because the knobs' real `min`/`max`
+  attributes are only ever set by the host's initial "params" JSON message,
+  which never arrives outside a real WebView2 session - confirmed the
+  function does get called with no error, just couldn't confirm the exact
+  displayed number is right without that missing host round-trip. The
+  conversion math itself is an exact mirror of `KnobNormalizedToReal()`
+  (already proven correct - it's what drives the existing knob->curve
+  direction) and of knob-control.js's own private formula, so this is a
+  format/attribute-availability gap in the test harness, not a reason to
+  doubt the logic.
+- Not yet re-confirmed live inside the real Standalone/VST3/CLAP host by the
+  user themselves - worth a quick live check next time it's convenient.
+
+User confirmed the above works live ("できてます") and asked one follow-up:
+double-click any PEQ knob to reset it to default, with Gain specifically
+resetting to 0dB.
+
+## 2026-08-25 — EQ knob double-click-to-default: Gain resets to 0dB, not the tuned patch default
+
+**Discovery**: double-click-to-default already exists for *every* knob-control
+in the whole app (`knob-control.js`'s `onDblClick()`, resets to
+`this.defaultValue` - generic, not EQ-specific), and `default-value` is
+already populated for every knob from the real host param info
+(`OnMessage()`'s `case "params"`, `paramInfo["default"]`). So this wasn't
+missing plumbing - the actual gap was that EQ Gain's real C++ default (e.g.
+`kParamEQLowGain`'s `InitDouble` default, 3.12dB) is a *tuned patch value*
+(this synth's baseline sound, see that InitDouble call's own comment), not a
+musically neutral "flat EQ" value - the user wants double-click to reach the
+latter specifically for Gain, not reproduce whatever the patch happened to
+start at.
+
+**Fix** (`index.html`, `OnMessage()`'s `case "params"`): right after the
+existing generic loop sets every knob's `default-value` from the host,
+a second pass overrides it back to `"0"` for exactly the 5 EQ Gain param IDs
+(57/59/62/65/68 - derived by filtering `kEQParamMap` for `kind === 'gain'`,
+not hand-listed). Freq/Q knobs untouched - their own tuned defaults (125Hz,
+0.78 Q, etc.) are still musically meaningful reset targets, unlike Gain.
+Only the WebView-side double-click *reset target* changes - the real
+param's actual default (initial patch value, DAW automation's own "reset to
+default", `.preset` files, etc.) is completely unaffected.
+
+**No C++ changes, no rebuild needed** - purely `index.html`/JS, and Debug
+builds of all 3 formats already read `resources/web/index.html` directly
+from source at runtime (`LoadIndexHtml()`'s `__FILE__`-relative path, see
+the "Release-mode GUI" entry above) - takes effect on next launch with no
+rebuild step. (A Release build, if ever made again, would need its postbuild
+resource-copy re-run to pick this up - not done now, not urgent.)
+
+**Verified** via the same throwaway local-HTTP-server Browser-pane technique
+as above: fed a synthetic "params" host message with realistic non-zero Gain
+defaults (3.12/1.92/3.60) - confirmed the 3 Gain knobs' `default-value`
+became exactly `"0"` while Freq/Q knobs kept their real tuned defaults
+untouched. Then simulated an actual `dblclick` on a Gain knob's circle
+element after moving it away from default - landed exactly on `+0.000 dB`.
+Same for a Freq knob - landed on its real tuned default (125 Hz), confirming
+that path was correctly left alone.
+
+## 2026-08-25 — Delay tempo-sync
+
+User request: "ディレイにシンクモードを作れますか" (add a sync mode to Delay).
+Mirrors the existing LFO Rate(Hz)/Rate(Tempo)/Sync pattern as closely as
+Delay's own architecture allows.
+
+**New params** (`FirstSynth.h`, appended after `kParamEQBypass` per the
+"never renumber" convention): `kParamDelayTimeTempo` (114, enum division,
+`LFO_TEMPODIV_VALIST`) and `kParamDelayTimeMode` (115, bool Sync toggle).
+**Sync defaults to `false`**, unlike the LFOs (which default `true`) -
+existing presets/patches saved before this param existed must keep sounding
+exactly as they did (plain ms-based Delay Time), not silently switch to
+synced the moment they're reloaded.
+
+**`DelayEffect<T>` (`FirstSynth_Effects.h`) needed real new plumbing**, not
+just param wiring - unlike the LFOs, it isn't an `LFO<T>`/`IOscillator<T>`
+subclass, so it had no rate/phase/tempo concept to hook into at all. Added:
+- `GetQNScalar(division)` - an exact copy of iPlug2's own
+  `LFO<>::GetQNScalar()` table (`Extras/LFO.h`), kept in sync manually the
+  same way this project's other DSP-mirroring code already is (e.g.
+  eq-curve-display.js mirrors `ParametricEQEffect`'s coefficient math).
+- `SetTempo(double)`, `SetSyncMode(bool)`, `SetDivision(int)` - all funnel
+  into a new `UpdateSyncedTimeMs()` that computes `mEffectiveTimeMs` (the one
+  value `Process()` actually reads, replacing its old direct `mTimeMs` read)
+  - either the synced value (`60000/tempo / GetQNScalar(division)`, clamped
+    to `[10, 2000]` ms) or the plain manual `mTimeMs`, depending on
+    `mSyncMode`. Clamped to the *param's own declared range* (10-2000ms,
+    `kParamDelayTime`'s `InitDouble`), not the buffer's real ~2100ms
+    capacity - a slow-tempo+long-division combo (e.g. 8/1 at 40 BPM =
+    48000ms) must be caught here, or the displayed knob position and the
+    actually-audible delay would silently disagree (the buffer-capacity
+    clamp already inside `Process()` would still catch it, but silently,
+    with no matching UI feedback).
+
+**`FirstSynth::ProcessBlock`**: added one `mDelay.SetTempo(tempo);` call,
+once per block, right where `mDSP.ProcessBlock(...)` already receives that
+same local `tempo` (the existing CLAP/VST3/host-tempo vs. Standalone-tempo
+selection, unchanged) - `mDelay` lives in `FirstSynth` itself, not
+`FirstSynth_DSP.h`, and only needs the current value (not per-sample phase
+like the LFOs), so a plain once-per-block setter was enough; no need to
+thread it through `IPlugInstrumentDSP::ProcessBlock`'s own signature.
+
+**`FirstSynth::OnParamChange`**: two new cases, `mDelay.SetDivision((int)
+value)` / `mDelay.SetSyncMode(value > 0.5)` - added directly in
+`FirstSynth.cpp`'s own switch (like Delay's other 4 params already are),
+not routed through `FirstSynth_DSP.h`'s `SetParam` like the LFOs are, since
+`mDelay` isn't part of the per-voice/DSP object.
+
+**`index.html`**: reused the *existing generic* `SetSync()` /
+`UpdateRateKnobVisibility()` / `.rate-knob-slot` machinery as-is, just
+extending `kLFOSyncParams` (+= 115) and `kLFORateKnobsBySync` (+= `115: [44,
+114]`) - no new JS functions needed, despite the "LFO"-named constants (they
+were never actually LFO-specific in implementation, only in the params
+they'd been used for so far - noted with a comment rather than renaming
+them, to avoid touching a lot of already-working code for no functional
+gain). Delay panel gained a `rate-knob-slot`-wrapped Time(ms)/Time(Tempo)
+pair plus a "Sync" toggle, positioned before Feedback/Mix/Ping Pong.
+
+**Verified**: all 3 formats compiled clean (0 errors). UI wiring confirmed
+live via the same throwaway-local-HTTP-server Browser-pane technique as the
+EQ work above: both Time knobs and the Sync checkbox exist with the right
+param ids, `kLFOSyncParams`/`kLFORateKnobsBySync` correctly extended, and
+toggling Sync on/off via the real `SetSync()` handler correctly swaps which
+knob is visible each time (ms hidden+tempo shown when on, reversed when
+off) - exactly mirroring the LFOs' own already-proven behavior. The
+tempo-division math itself (`GetQNScalar`/`UpdateSyncedTimeMs`) was verified
+by hand (traced scalar values against note-division names, e.g. "1/16"
+scalar=4 correctly yields 1/4 of a beat's duration, "1/1" scalar=0.25
+correctly yields 4 beats) rather than run live, since it's pure C++ with no
+JS-side equivalent to test in the same browser-harness way the EQ curve
+math was. **Not yet confirmed audibly** - worth a live check (e.g. turn Sync
+on, set a slow BPM + long division, confirm the repeats actually land on
+the beat and the knob doesn't silently hit the 2000ms ceiling for divisions
+that would want to go longer, like 8/1 at very slow tempos).
+
+## 2026-08-26 — Envelope Shape diagram, oscillator phase question, and a dev-only A/B test of Pigments'/Sylenth1's time-knob curves
+
+User wasn't satisfied with the current Amp/Filter ADSR "feel" and asked to
+see the actual curve shape as a diagram first (published as an Artifact,
+mirroring `ADSREnvelope.h`'s real math: linear-timed attack reshaped by
+`pow(x, 2)` since `FirstSynth_DSP.h` calls `SetAttackShape(2.)` on both
+envelopes, then true exponential decay/release calibrated the same way
+`CalcIncrFromTimeExp` is - not committed to the plugin itself, just a
+one-off visualization tool). That prompted two follow-ups.
+
+**Oscillator phase question**: "発音時のphaseはどうなってますか" - answered by
+reading `Voice::Trigger()` (`FirstSynth_DSP.h`): `mPhase1 = mPhase2 = 0.;` is
+the unconditional first line, every note-on, regardless of `isRetrigger`
+(which is itself always `false` in the actual current voice-allocation code
+- `VoiceAllocator.cpp` has a `// TODO retrig / legato` with `bool retrig =
+false;` hardcoded at every call site). So phase is already hard-reset to 0
+on literally every trigger - not a source of inconsistent attack feel: if
+anything, every note starts from the exact same waveform point every time.
+
+**Reference-synth comparison**: user measured each reference synth's own
+knob's real value at 12-o'clock/50% rotation - Sylenth1: 0-10000ms, center
+exactly 5000ms (linear). Pigments: 0-20000ms, center 1300ms (a power curve,
+solving `pow(0.5, exp) = 1300/20000` gives exponent ≈3.9434 - the same
+`ShapePowCurve` family FirstSynth's own knobs already use, just steeper and
+over one wide shared range instead of FirstSynth's current per-stage
+different max, 1000/4000/8000ms). At FirstSynth's own current knob-center
+(exponent 3): Attack≈126ms, Decay≈501ms, Release≈1002ms - notably more
+front-loaded toward short times than Pigments, especially for Attack (max
+only 1000ms vs Pigments' effective 20000ms for every stage).
+
+**Dev-only A/B tool built** (user request: "開発用のみで切り替えで両方試せる
+ように") to actually try both reproduced curves live rather than just
+compare numbers on paper:
+- `FirstSynth.h`/`.cpp`: new `#ifdef _DEBUG`-only mechanism -
+  `EEnvTimeCurvePreset` (`kEnvTimeCurveFirstSynth`/`Pigments`/`Sylenth1`),
+  `ApplyDevEnvTimeCurve()` (reinterprets a param's raw *normalized* [0,1]
+  value through the chosen preset's curve instead of that param's own real
+  declared `ShapePowCurve(3.)`/range), `SetEnvTimeCurvePreset()` (switches
+  and immediately re-applies all 6 Attack/Decay/Release x Amp/Filter params'
+  *current* normalized values through the new curve, so switching takes
+  effect at once, not just on the next knob nudge). `OnParamChange` overrides
+  its local `value` for exactly these 6 params when a non-default preset is
+  active - they already fell through to `mDSP.SetParam(paramIdx, value)`
+  unchanged, so nothing else needed to change. New dev-only message
+  `kMsgTagSetEnvTimeCurvePreset` (24) - the enum slot is always declared
+  (never-renumber convention preserved) but its C++ *handling* and the
+  WebView selector that sends it are both `#ifdef _DEBUG` / hidden-until-
+  `SetDevBuild(true)` - never reachable in a Release build at all, matching
+  this project's other dev-only tools (Factory preset marking).
+  Real param declarations (used for host automation/preset save) are
+  completely untouched - this only changes how `OnParamChange` *interprets* a
+  change to one of these 6 params while testing.
+- `index.html`: new `<select id="envTimeCurveSelect">` next to the Factory
+  button (same hidden-by-default/`SetDevBuild` pattern). `SetEnvTimeCurvePreset()`
+  (JS) sends the message via `SAMFUI`'s `ctrlTag` (matching the existing
+  `kMsgTagSetUIScale` convention for a single small integer, no base64
+  payload needed) *and* overrides the 6 knobs' `min`/`max`/`shapeExponent` to
+  match, so what's displayed/how dragging feels stays consistent with what
+  the C++ side actually does with the same shared normalized value - the
+  normalized value is the single source of truth on both sides, never the
+  real declared param range. Each knob's true original min/max/shape-exponent
+  is cached once (from the host's own initial "params" message) so switching
+  back to preset 0 restores them exactly.
+- `knob-control.js`: found mid-implementation that `shape-exponent` isn't in
+  `observedAttributes` (only `min`/`max`/etc. are) - `setAttribute()` on it
+  silently does nothing after construction. Fixed by setting the instance
+  property directly instead (`knob.shapeExponent = ...` - a plain public
+  field, not private, so this works from outside the class) rather than
+  touching `observedAttributes` for every knob project-wide. Also added
+  `refreshDisplay()` (re-renders from the knob's own current normalized value
+  without changing it) - needed because changing min/max/shapeExponent alone
+  doesn't retroactively refresh an already-rendered label/pointer position.
+
+**Verified**: both Debug and Release compile clean (0 errors) - confirms the
+`#ifdef _DEBUG` gating has no stray unconditional references. Live JS
+verification via a throwaway local-HTTP-server Browser-pane session (same
+technique as the EQ/Delay work above) - hit a real caching bug along the way
+(the Browser tool's networking layer was serving a stale cached response for
+a `localhost:8934` URL reused across many earlier test sessions this
+conversation, even from a brand-new tab with a hard navigate - moving to a
+fresh port immediately fixed it; noted here in case it recurs). Once past
+that: set the Attack knob to normalized 0.5, confirmed it showed "125.9 ms"
+under the FirstSynth preset, exactly **"1300 ms" under Pigments** and exactly
+**"5000 ms" under Sylenth1** - both landing exactly on the user's own
+measured reference points - then confirmed switching back to preset 0
+restored the original min/max/shape-exponent exactly.
+
+**Not yet done**: live-heard in the real Standalone/DAW app by the user -
+this was only verified in the JS test harness (accurate for the display/
+curve-math side) and by code inspection for the C++ side (accurate for the
+compile/logic side), but the two were never exercised together as one real
+running plugin instance this session.
+
+## Amp/Filter ADSR: adopted Pigments curve as the real, permanent Attack/
+## Decay/Release curve (2026-08-25)
+
+After A/B testing (above), the user tried reproducing the Sylenth1 reference
+too and found the numbers didn't match what they expected - "sylenth1です
+が、どうやら数値は秒ではないようです。もっと短く感じます". I started
+adding diagnostic logging to chase it, but the user clarified this wasn't a
+FirstSynth bug at all: they had misread Sylenth1's own UI and transcribed
+non-second values as if they were seconds ("表記をそのまま秒だと思って書
+き写したのですが、それは秒ではなかった"). All diagnostic logging (`LogEnvTime`
+in `FirstSynth.cpp`/`FirstSynth_DSP.h`) was fully reverted - confirmed via
+grep no references remained, rebuilt clean.
+
+Getting an accurate Sylenth1 reference turned out to be more work than it was
+worth, so the user decided to just adopt the **Pigments** curve outright as
+FirstSynth's real curve: "どうやら思ったよりも複雑に出来ています。とりあ
+えず、pimentsのエンベロープタイムを採用します。" I flagged that this would
+change the sound of existing saved presets' ADSR (since it changes the real
+declared param curve, not just a dev overlay) - user confirmed via
+AskUserQuestion: "気にしない（推奨）", proceed regardless.
+
+**Changes**:
+- `FirstSynth.cpp`: all 6 ADSR time params (`kParamAttack/Decay/Release`,
+  `kParamFilterAttack/Decay/Release`) changed from their old individual
+  ranges/`ShapePowCurve(3.)` to a single unified curve: `min=0.`, `max=20000.`,
+  `ShapePowCurve(3.9434164716336326)` - the exponent solving
+  `pow(0.5, exp) = 1300/20000` (Pigments' own 12-o'clock/1300ms reference
+  point), computed via Python (`math.log(1300/20000) / math.log(0.5)`). Each
+  param's real-value default (`10.`) unchanged.
+- `index.html`: the same 6 knobs' `shape-exponent` attribute updated from
+  `"3"` to `"3.9434164716336326"` to match (verified via grep that unrelated
+  knobs still on `shape-exponent="3"` - Note Glide Time, Mod Env 1/2 - were
+  left untouched).
+- Dev A/B tool simplified from 3-way to 2-way: since preset 0 ("FirstSynth")
+  is now identical to the old "Pigments" option, that option was removed -
+  `EEnvTimeCurvePreset` collapsed to `{kEnvTimeCurveFirstSynth, kEnvTimeCurveSylenth1}`,
+  `ApplyDevEnvTimeCurve()`'s Pigments case removed (now redundant with
+  `default`), `envTimeCurveSelect`'s `<option>` list and `kEnvTimeCurvePresets`
+  JS map both trimmed to just Sylenth1. This enum is a pure runtime UI
+  selector (never persisted/saved), so renumbering it is safe - unlike
+  `EParams`, which must never be renumbered.
+
+**Verified**: all 3 formats (Standalone/VST3/CLAP) rebuilt Debug|x64, 0
+errors each. Launched Standalone, PrintWindow screenshot confirmed the
+Filter ADSR panel renders correctly under the new curve (Attack 16.25 ms,
+Decay 1321 ms, Release 507.8 ms shown for knobs at their default/varied
+positions - no visual corruption, no crash). Test process closed after
+verification.
+
+**Not yet done**: live-heard/felt by the user in their own testing - this
+was only visually verified via screenshot this session, not played.
+
+## Mod Env 1/2: also adopted Pigments curve (2026-08-26)
+
+Follow-up to the above - user asked "2つのMODENVも同じように出来ますか" (can
+the two Mod Envs get the same treatment). `kParamModEnv1Attack/Decay/Release`
+and `kParamModEnv2Attack/Decay/Release` (6 params, `FirstSynth.cpp`) changed
+from their old individual ranges (`1-1000`/`1-4000`/`2-8000`, `ShapePowCurve(3.)`)
+to the same unified curve as the main Amp/Filter ADSR: `min=0., max=20000.,
+ShapePowCurve(3.9434164716336326)`. `index.html`'s matching 6 `<knob-control>`
+elements (`param-id="78/79/81"` Mod Env 1, `"82/83/85"` Mod Env 2) updated
+`shape-exponent` from `"3"` to `"3.9434164716336326"` to match, `max-digits="4"`
+left as-is (same as the main ADSR knobs, sufficient for 20000ms display).
+Sustain params (`80`/`84`) untouched. Confirmed via code read that
+`FirstSynth_DSP.h`'s `SetParam()` for these params just forwards the real
+`value` (ms) into `ADSREnvelope::SetStageTime()` - no other hardcoded range
+dependency, so no DSP-side change needed. The dev-only A/B curve tool
+(`ApplyDevEnvTimeCurve`, still Amp/Filter-ADSR-only, 6 params) was
+intentionally left un-extended to Mod Env - out of scope, user didn't ask for
+it.
+
+**Verified**: all 3 formats rebuilt Debug|x64, 0 errors each (had to
+`taskkill` a leftover `FirstSynth_x64.exe` from the prior test session first -
+it was locking the Standalone exe during copy). Tried to reach the Matrix
+page via native-window mouse-automation (PowerShell `mouse_event`/`SendInput`
+at the tab button's exact pixel coordinates, verified against a PrintWindow
+screenshot) to screenshot-confirm the Mod Env knobs, but the click never
+registered - tried 3 times (legacy `mouse_event`, `SendInput` with virtual-
+desktop-aware absolute coords, then a fresh atomic re-check of window rect +
+immediate click) and the page never left "Synth". Likely cause: this app's
+UI is hosted in a WebView2 child window/render surface, and global synthetic
+mouse input to the top-level HWND doesn't reliably reach Chromium's own input
+pipeline - would need to target the child window specifically (or real
+hardware input) to work reliably. Abandoned the automation as not worth
+the effort for a low-risk, attribute-only change identical in kind to the
+already-screenshot-verified main ADSR knobs. **User confirmed by their own
+manual testing in the Standalone app: "出来てると思います"** (looks like
+it's working) - test process closed after.
+
+## Matrix Filter Cutoff destination: scale corrected from +-8 to +-4 octaves
+## (2026-08-26)
+
+User noticed/asked whether Filter LFO patched via the dedicated Filter LFO
+section vs. via the Matrix (Mod LFO 1/2 -> Filter Cutoff) sweeps the cutoff
+by noticeably different amounts. Investigated - confirmed a real
+inconsistency, not a misperception: the dedicated Filter LFO's Depth knob
+scales to **+-4 octaves at 100%** (`FirstSynth_DSP.h`, `kParamFilterLFODepth`
+case: `(value/100.)*4.`), but the Matrix's Filter Cutoff destination was
+scaling its accumulated modulation by a hardcoded **+-8 octaves** (matching
+Filter Env Amount's own range instead, `envAmountOctaves` a few lines above -
+apparently copied from the wrong dedicated knob's range when the Matrix
+destinations were first built). So the same LFO waveform at matching "100%"
+settings swept twice as far via the Matrix as via the dedicated Filter LFO
+section.
+
+User confirmed the fix direction: "そうですね。LFOと合わせてみてください"
+(align it with the [Filter] LFO). Changed the `+- 8` to `+- 4` in the single
+line computing `cutoffHz` in `ProcessSamplesAccumulating`
+(`FirstSynth_DSP.h`, the `matDest[kMatDstFilterCutoff] * (T) 4.` term) -
+comment above updated to explain the new rationale (matches dedicated Filter
+LFO Depth, not Filter Env Amount). Filter Env Amount's own +-8 octave range
+is untouched - that's a different dedicated knob, not compared to LFOs by the
+user.
+
+**Verified**: all 3 formats rebuilt Debug|x64, 0 errors (same locked-exe
+`taskkill` needed as above, then rebuilt clean).
+
+**Not yet done**: not yet heard live by the user - this was a code-level fix
+based on identifying the scale mismatch, not yet A/B'd by ear in a running
+instance.
+
+## Oscillator phase: dev-only "Fixed" vs "Free" A/B toggle (2026-08-26)
+
+Follow-up to the earlier oscillator-phase investigation (this session, see
+above - confirmed `mPhase1`/`mPhase2` unconditionally reset to 0 on every
+note-on). User asked: "オシレータの位相の話ですが、固定とそうでないのと開
+発用に切り替えて使ってみたいです" (want a dev-only toggle between fixed and
+non-fixed phase, to try both). Built following the exact same pattern as the
+Env Time Curve A/B tool (`kMsgTagSetEnvTimeCurvePreset`) - a new always-
+declared, `#ifdef _DEBUG`-only-handled message.
+
+**Two reset sites found and both gated** (there are two, not one - easy to
+miss the second): `Voice::Trigger()`'s own unconditional `mPhase1 = mPhase2
+= 0.;`, and a *second* reset via `ADSREnvelope`'s `mResetFunc` callback
+(passed as `mAMPEnv`'s constructor arg, fires specifically on a mid-envelope
+legato/mono retrigger, i.e. voice-stealing while still sounding - a different
+code path than a fresh `Trigger()` on a free voice). Both now read a new
+per-Voice flag, `mFixedPhase` (default `true` = today's existing behavior,
+unchanged).
+
+**Changes**:
+- `FirstSynth_DSP.h`: `mFixedPhase` (`#ifdef _DEBUG` bool) added to `Voice`'s
+  `public:` section (not `private:` where `mPhase1`/`mPhase2` themselves
+  live) - it has to be reachable from `IPlugInstrumentDSP`'s own
+  `ForEachVoice` broadcast, same as `mMatrixSource`/`mVelocity`/etc. above it,
+  none of which are private either. Both reset sites wrapped in `#ifdef
+  _DEBUG if (mFixedPhase)`. New `SetOscPhaseMode(bool fixed)` on
+  `IPlugInstrumentDSP` (`#ifdef _DEBUG`), mirrors `SetParam()`'s own
+  `ForEachVoice` pattern for per-voice state.
+- `FirstSynth.h`: `kMsgTagSetOscPhaseMode` appended to `EMsgTags` (after
+  `kMsgTagSetEnvTimeCurvePreset`, value 25) - always declared, `#ifdef
+  _DEBUG`-only handling, same convention as its sibling. `mOscPhaseFixed`
+  (bool, mirrors current state) + `SetOscPhaseMode(bool)` declaration added
+  to the same `#ifdef _DEBUG` member block as `mEnvTimeCurvePreset`.
+- `FirstSynth.cpp`: `OnMessage()` case forwards `ctrlTag != 0` to the new
+  `SetOscPhaseMode()`, which just stores `mOscPhaseFixed` and calls
+  `mDSP.SetOscPhaseMode(fixed)`. Much simpler than the Env Time Curve tool -
+  no knob/param reinterpretation needed, this is a plain per-voice runtime
+  flag, not tied to any host-visible param.
+- `index.html`: new `<select id="oscPhaseModeSelect">` (`"Phase: Fixed"` /
+  `"Phase: Free"`) next to `envTimeCurveSelect`, same hidden-by-default/
+  `SetDevBuild(true)` reveal pattern. `SetOscPhaseMode(fixed)` (JS) just
+  sends `SAMFUI(25, fixed, 0)` - no knob display to keep in sync this time.
+
+**Verified**: all 3 formats (Standalone/VST3/CLAP) rebuilt Debug|x64, 0
+errors each; also rebuilt Standalone in **Release|x64** to confirm the
+`#ifdef _DEBUG` gating has no stray unconditional references outside it (also
+0 errors) - same double-check this project always does for a dev-only tool
+before calling it done.
+
+**Not yet done**: not yet exercised live (toggled and A/B'd by ear) by the
+user - this was a build-only verification pass (Debug+Release compile clean).
+Did not attempt another native-window mouse-automation screenshot pass this
+time, given the Mod Env entry above already established it's unreliable for
+this WebView2-based UI - left it to the user's own manual testing instead.
+
+## Oscillator phase dev toggle: fixed a display-only bug on GUI reopen
+## (2026-08-26)
+
+User tried the new toggle live in BespokeSynth (VST3) - "GUIをもう一度開く
+とFIXEDに戻ってしまいます" (reopening the GUI shows Fixed again). Root cause:
+`mOscPhaseFixed`/each `Voice`'s `mFixedPhase` are plain C++ members on the
+plugin instance/DSP - untouched by closing just the editor window (only the
+WebView itself gets torn down and recreated). But the WebView's HTML always
+restarts showing each `<select>`'s hardcoded default option on reload, and
+nothing was pushing the real current state back to a freshly (re)loaded page
+- so the dropdown *looked* like it reverted to Fixed even though the DSP was
+still correctly applying whichever mode had actually been selected. Same
+latent bug existed for the Env Time Curve tool's `envTimeCurveSelect` too
+(never reported, since the user hadn't reopened the GUI mid-A/B on that one
+yet) - fixed both at once since they share the identical root cause.
+
+**Fix**: `FirstSynth.cpp`'s `OnWebContentLoaded()` (`#ifdef _DEBUG` block,
+right after the existing `SetDevBuild(true)` call) now pushes both tools'
+real current state to the UI on every WebView load via
+`EvaluateJavaScript()`: `SetEnvTimeCurveDisplay(mEnvTimeCurvePreset)` and
+`SetOscPhaseModeDisplay(mOscPhaseFixed ? 1 : 0)`. Two new JS functions in
+`index.html` (display-only - set the `<select>`'s `.value`, and for Env Time
+Curve also reapply the knob min/max/shapeExponent overrides, same logic
+`SetEnvTimeCurvePreset()` already has for that part - but neither one
+re-sends the message back to C++, since that state's already correct there,
+only the UI needed catching up).
+
+**Verified**: all 3 formats rebuilt Debug|x64, 0 errors - VST3 rebuild hit a
+"共有違反" (sharing violation) build error on the first attempt because
+BespokeSynth still had the previous `FirstSynth.vst3` loaded; user closed
+BespokeSynth ("とじました") and the rebuild succeeded cleanly on retry.
+Standalone/CLAP had already built clean before that (they don't lock the
+same file BespokeSynth was holding).
+
+**Not yet done**: not yet re-confirmed live by the user that reopening the
+GUI in BespokeSynth now correctly shows the last-selected mode.
+
+## WebView2 environment reuse across GUI open/close (2026-08-26, iPlug2 shared
+## framework change - local commit only, not pushed upstream)
+
+User report: using FirstSynth as a VST3 in BespokeSynth feels noticeably
+heavier than Standalone, and specifically "再生中にGUIを開くと、その瞬間に
+CPU消費がすさまじくなります" (opening the GUI during playback causes a
+severe CPU spike right at that moment). Confirmed root cause is NOT
+FirstSynth's own code but shared `iPlug2/IPlug/Extras/WebView/IPlugWebView_win.cpp`:
+`IWebViewImpl::OpenWebView()` called `CreateCoreWebView2EnvironmentWithOptions()`
+completely fresh on *every* call, and `CloseWebView()` dropped the only
+reference to it (`mWebViewEnvironment = nullptr;`) on every close. Spinning
+up a WebView2 "environment" (the underlying shared Chromium browser/GPU/
+renderer process machinery) is expensive - in a host that tears down and
+recreates the editor window on every GUI open/close (confirmed: BespokeSynth
+- there's already an older comment in this same file, 2026-08-18, noting
+BespokeSynth's parent-resize timing quirks, so this host is known to behave
+this way), that full cost was being paid live, during playback, on every
+single GUI open. Standalone doesn't show this because its window normally
+opens once and stays open through a whole session.
+
+User's call after being shown the tradeoff (this is shared framework code,
+past convention here has been local-commit-only, not pushed to the upstream
+iPlug2 checkout): "改修は避けて通れないでしょう" (the fix can't be avoided) -
+proceed.
+
+**Fix** (per Microsoft's own WebView2 guidance: reuse one environment object
+across multiple opens/controls rather than recreating it - only the much
+cheaper *controller* needs to be created fresh per open):
+- Added `IPlugWebView_win.cpp`: `static wil::com_ptr<ICoreWebView2Environment>
+  gWebViewEnvironment` - process-wide (this .cpp is one translation unit per
+  plugin binary, so shared across every instance of *this* plugin in the host
+  process, never across different plugins). Plus `gWebViewEnvironmentPending`
+  (bool) and `gPendingControllerCreations` (`vector<function<void()>>`) to
+  correctly queue a second `OpenWebView()` call that arrives while the first
+  environment creation is still in flight (async, its own completion
+  callback), instead of racing a second competing environment.
+- `OpenWebView()` restructured: the old nested "create environment -> create
+  controller" callback chain is now extracted into a standalone
+  `createController` lambda, invoked either immediately (environment already
+  cached), queued (creation in flight), or from inside that creation's own
+  completion callback (draining the queue too, for any other instances that
+  piled up waiting). The giant unchanged controller-setup body (event
+  handlers, script injection, bounds clamping, etc, ~230 lines) didn't need
+  to move or reindent - it stays at the same brace-nesting depth as before.
+- `CloseWebView()`: no longer nulls `mWebViewEnvironment` - that's just this
+  instance's own reference to the shared static now; letting it go on
+  eventual destruction is harmless, the static keeps the real environment
+  object alive regardless of how many instances currently hold a reference.
+- Dangling-`this` safety: `IWebViewImpl` gained `std::shared_ptr<bool> mAlive`
+  (a separate heap allocation, not embedded in `this`, so a `weak_ptr` to it
+  correctly reports "expired" even after `this` itself is freed). Every
+  deferred/queued continuation captures a `weak_ptr<bool>` and checks
+  `.lock()` before touching `this` via the captured `createController` -
+  covers the edge case of a GUI being closed while its own environment-creation
+  request is still queued behind another instance's in-flight one.
+
+**Verified**: rebuilt Standalone/VST3/CLAP Debug|x64 (0 errors) and also
+Standalone Release|x64 (0 errors, this fix is unconditional - not `#ifdef
+_DEBUG`-gated like the other recent dev tools, it's a real behavior change
+for every build). Launched Standalone, PrintWindow screenshot confirmed the
+GUI still renders correctly (all knobs/panels intact, "Phase: Fixed"/"Env
+Time: FirstSynth" dev selectors both showing correctly) - no visual
+corruption, no crash on the modified WebView creation path.
+
+**Confirmed live by the user in BespokeSynth**: "Bespokesynth上でGUI開閉し
+ました。スパイクはなくなりました。" (opened/closed the GUI in BespokeSynth -
+the spike is gone). The fix works as intended for the actual reported
+problem. Not separately exercised: the multi-instance-racing-for-the-same-
+environment path (two FirstSynth instances both opening their editor for the
+first time nearly simultaneously) - reasoned through carefully but not
+directly reproduced/tested this session; no reason to expect it's needed
+given the straightforward single-instance case is confirmed fixed.
+
+Also worth noting for future sessions: this fix lives in the *shared*
+`C:\Users\a_wak\CLAP_plugin\iPlug2\` checkout, which every sibling project
+(SuiKinKutsu, GrainField, GrainKit/Compost, UeberLooper, Chaoscape) compiles
+directly from via the same `..\..\iPlug2\...` relative path (confirmed via
+grep on their own `.vcxproj` files) - unlike the earlier "iPlug2 WebView
+Windows Release bug" fix (which lived in each project's own copied
+`postbuild-win.bat` and needed manual porting per-project), this one applies
+to every sibling project automatically the next time each is rebuilt, no
+manual porting needed. User asked about this specifically (worried the
+local-commit-only convention meant other users wouldn't get the fix) - see
+this file's own explanation above for why that convention only means "not
+pushed to the public upstream iPlug2 GitHub project," not "excluded from
+FirstSynth's own distributed builds" (iPlug2 is compiled directly into the
+binary, not a separate runtime dependency).
+
+## Env Time Curve dev tool removed; Osc Phase Mode dev tool kept (2026-08-26)
+
+User's final calls on the two active dev-only A/B tools: "エンベロープのカ
+ーブですが、pigmentsカーブを採用しますので、sylenth1の切り替えスイッチは
+削除してください。オシレータのphaseに関しては、もう少し様子をみたいです。"
+(Envelope curve: adopting the Pigments curve, so remove the Sylenth1 switch.
+Oscillator phase: still want to keep watching that one a while longer.) So
+the Env Time Curve tool (`kMsgTagSetEnvTimeCurvePreset`/`EEnvTimeCurvePreset`/
+`ApplyDevEnvTimeCurve`/`SetEnvTimeCurvePreset`, plus its `envTimeCurveSelect`
+UI and all supporting JS state) was fully deleted; the Osc Phase Mode tool
+(`kMsgTagSetOscPhaseMode`/`mFixedPhase`/`oscPhaseModeSelect`, from earlier
+this session) stays exactly as-is, still under active evaluation.
+
+**Removed, across all 4 files**:
+- `FirstSynth.h`: the `kMsgTagSetEnvTimeCurvePreset` `EMsgTags` entry, and the
+  `#ifdef _DEBUG` block's `EEnvTimeCurvePreset` enum/`mEnvTimeCurvePreset`/
+  `ApplyDevEnvTimeCurve()`/`SetEnvTimeCurvePreset()` declarations. Since this
+  slot was never persisted/saved anywhere (dev-only, `#ifdef _DEBUG`-gated,
+  pure live WebView<->plugin IPC - unlike a real host-automatable param),
+  actually deleting it and letting `kMsgTagSetOscPhaseMode` shift down a
+  number (25 -> 24) was judged safe, rather than leaving a permanently
+  unused/reserved slot the way `EParams`' "never renumber" convention would
+  require for a real param.
+- `FirstSynth.cpp`: the `OnMessage()` case, both function bodies
+  (`ApplyDevEnvTimeCurve`/`SetEnvTimeCurvePreset`), `OnParamChange()`'s 6-param
+  override block, and the `OnWebContentLoaded()` `SetEnvTimeCurveDisplay` push
+  (added just one turn earlier this session for the GUI-reopen display bug -
+  removed along with everything else now that the tool itself is gone). The
+  historical comment on `kParamAttack`'s `InitDouble()` explaining *why* the
+  Pigments curve was chosen was kept (still accurate/useful design-decision
+  record) but its now-dangling reference to the deleted symbol was swapped
+  for a pointer to progress.md instead.
+- `resources/web/index.html`: the `envTimeCurveSelect` `<select>` element and
+  its comment, `SetDevBuild()`'s handling of it, `SetEnvTimeCurvePreset()`/
+  `SetEnvTimeCurveDisplay()`, `kEnvTimeCurveParamIds`/`kEnvTimeCurveOriginals`/
+  `kEnvTimeCurvePresets`, and the "params"-handler block that populated
+  `kEnvTimeCurveOriginals`. `SetOscPhaseMode()`'s `SAMFUI()` call updated from
+  `25` to `24` to match the C++ enum's shift.
+
+**Verified**: all 4 targets rebuilt clean, 0 errors - Standalone/VST3/CLAP
+Debug|x64, plus Standalone Release|x64 (confirms no stray reference to a
+deleted symbol survived anywhere, in either configuration). Not yet
+re-launched/screenshotted this round - the changes are a straightforward
+deletion of an already-verified-working tool, following the same edit
+pattern used throughout this file's own earlier removals.
+
+## Shared iPlug2 checkout published as a private GitHub fork (2026-08-29)
+
+Context: Ito tried to build FirstSynth on a Mac and hit the fact that the
+`CLAP_plugin\iPlug2` checkout on this PC is modified, not stock upstream, and
+existed nowhere else. The Mac build (and adding an AU target) needs this
+exact checkout. Ito's suggestion: just share it on GitHub. Done.
+
+**What was done:**
+- Committed two previously-uncommitted framework fixes that were sitting in
+  the iPlug2 working tree (both already verified working in sibling projects
+  earlier this month, just never committed here): the WebView2
+  environment-reuse perf fix (BespokeSynth GUI-reopen CPU spike, 2026-08-26)
+  and the Release-build `index.html` path resolution fix
+  (`GetCurrentModuleDirWin`, 2026-08-25). New commit `39c6341d4`.
+- `git remote rename origin upstream` (upstream stays `iPlug2/iPlug2` for
+  pulling framework updates).
+- Created **private** repo `github.com/waki-loveburger/iPlug2` (private
+  because commit `49bd00eb7`'s message names unreleased products), added it
+  as `origin`, pushed `master`. `master` now tracks `origin/master`.
+  Private because the auth token needed a one-time `workflow` scope added
+  (`gh auth login -h github.com -s workflow -w`) - upstream's own
+  `.github/workflows/*.yml` in history were being rejected without it.
+- Full local delta vs upstream = 3 commits: `4d90482dc` (VST3 DPI +
+  per-product WebView2 cache isolation), `49bd00eb7` (WASAPI, Standalone
+  Save/Load Preset, ADSR `SetAttackShape`, LFO S&H, earlier DPI/bounds
+  fixes), `39c6341d4` (this session's two WebView fixes).
+
+**Collaborator access:** not added yet - Ito's GitHub username wasn't on
+hand. Either add him at
+`github.com/waki-loveburger/iPlug2/settings/access`, or he requests access /
+self-invites the way he did for the SuiKinKutsu repo.
+
+**Still open (separate follow-up):** pull the ADSR `SetAttackShape` (~16 lines)
+and LFO S&H (~50 lines) into FirstSynth's own tree as `FirstSynth_ADSR.h` /
+`FirstSynth_LFO.h` so upstream's `Extras/ADSREnvelope.h` / `Extras/LFO.h` can
+go back to stock. FirstSynth is the only consumer of the modified versions
+(grep-checked all 5 siblings - none use `SetAttackShape` or `kSampleHold`).
+This is hygiene only; it does NOT remove the need for the fork (the IPlugAPP/
+WebView framework changes can't live in a project). Not done this session -
+waiting on the go-ahead.

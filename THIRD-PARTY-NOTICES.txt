@@ -1,7 +1,17 @@
 FirstSynth - Third-Party Notices
 ================================
 
-This product uses the Steinberg VST 3 SDK.
+This product uses the Steinberg VST 3 SDK and Steinberg ASIO technology.
+
+--------------------------------------------------------------------------
+ASIO
+--------------------------------------------------------------------------
+
+ASIO is a trademark of Steinberg Media Technologies GmbH, registered in
+Europe and other countries.
+
+Licensed from Steinberg Media Technologies GmbH under the Steinberg ASIO SDK
+Licensing Agreement 2.0.5 (Version 2.3.4).
 
 --------------------------------------------------------------------------
 VST 3 SDK
