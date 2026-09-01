@@ -489,6 +489,20 @@ void FirstSynth::LoadPresetByName(const char* rawName)
     std::vector<uint8_t> buf((size_t) fileSize);
     fread(buf.data(), 1, buf.size(), fp);
 
+    // Reset every param to its compiled-in default before applying the preset's
+    // bytes. A .preset file is a headerless positional dump of NParams() doubles
+    // (see this file's preset-format comment / progress.md) - a preset saved by
+    // an older build simply has fewer doubles, and iPlug2's UnserializeParams
+    // stops as soon as the chunk runs out, leaving every param appended since
+    // that preset was saved at whatever the *previously loaded* preset left it
+    // (user report 2026-09-01: Osc Drift carrying over between presets). Reset
+    // first so those params land on their default (0 for Osc Drift) instead.
+    // UnserializeParams' own OnParamReset(kPresetRecall) then pushes every param
+    // - restored or defaulted - to the DSP; OnRestoreState() does the same for
+    // the WebView UI.
+    for (int i = 0; i < NParams(); ++i)
+      GetParam(i)->Set(GetParam(i)->GetDefault());
+
     IByteChunk chunk;
     chunk.PutBytes(buf.data(), (int) buf.size());
     UnserializeState(chunk, 0);
@@ -697,6 +711,14 @@ void FirstSynth::LoadAutoState()
   {
     std::vector<uint8_t> buf((size_t) fileSize);
     fread(buf.data(), 1, buf.size(), fp);
+
+    // Same reason as LoadPresetByName()'s own reset loop: autosave.state is the
+    // identical headerless positional dump, so one written by an older build is
+    // short and leaves params appended since then untouched. On a fresh launch
+    // they'd already be at their defaults, but resetting explicitly keeps this
+    // correct even if LoadAutoState() is ever called at some other time.
+    for (int i = 0; i < NParams(); ++i)
+      GetParam(i)->Set(GetParam(i)->GetDefault());
 
     IByteChunk chunk;
     chunk.PutBytes(buf.data(), (int) buf.size());

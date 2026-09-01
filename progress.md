@@ -7360,3 +7360,28 @@ osc twice per voice (`Morph(phase)` + a quadrature partner), and to keep the
 width past the filter the Moog ladder would have to run L/R separately (the
 expensive part) - or accept mono-after-filter. Lighter than unison (which is on
 hold).
+
+### Preset load now resets params to default first (2026-09-01)
+
+User evaluating Osc Drift in Standalone: switching to a preset saved *before*
+Osc Drift existed left the knob at the previously-loaded preset's value instead
+of returning to 0. Root cause: a `.preset` (and `autosave.state`) file is a
+headerless positional dump of `NParams()` little-endian doubles, and iPlug2's
+`IPluginBase::UnserializeParams` loops `for (i=0; i<n && pos>=0; ++i)` - as soon
+as the chunk runs out (`IByteChunk::Get` returns -1) it stops, so every param
+appended since that file was saved is simply left untouched, keeping whatever
+the last-loaded preset set it to.
+
+Fix (`FirstSynth.cpp`): both load paths - `LoadPresetByName()` and
+`LoadAutoState()` - now do `for (int i=0;i<NParams();++i) GetParam(i)->Set(GetParam(i)->GetDefault());`
+right before `UnserializeState()`. Full-length (current-build) files are then
+byte-for-byte identical in result (every param gets overwritten anyway); short
+(older-build) files leave the missing trailing params at their compiled-in
+default (0 for Osc Drift). `UnserializeParams`' own `OnParamReset(kPresetRecall)`
+still fans the final values out to the DSP; `OnRestoreState()` still does the UI.
+This also future-proofs the next appended param. Verified: builds clean;
+standalone relaunches fine (screenshot). NOTE: this session's VST3 postbuild
+*install-copy* to `C:\Program Files\Common Files\VST3\` failed (code 4) purely
+because BespokeSynth was open with the plugin loaded (locks the target) - the
+VST3 *binary* compiled/linked fine; Standalone + CLAP copied fine. Close the
+host and rebuild `FirstSynth-vst3` to refresh the installed VST3.
