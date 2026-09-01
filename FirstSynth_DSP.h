@@ -171,25 +171,94 @@ namespace FirstSynthOsc
   // otherwise introduce - see the Saw->Square segment's comment.
   constexpr double kMorphTargetRMS = 0.5773502691896258;
 
+  // ---------------------------------------------------------------------------
+  // Band-limiting (2026-09-01). Every Morph() waveform except pure Sine is
+  // piecewise-linear, so its naive form radiates energy above Nyquist that
+  // folds back as inharmonic aliasing - the "hard / brittle / metallic top
+  // end" the user reported, worst toward the Saw/Square/Pulse end of the knob
+  // and worst at high notes. Rather than oversample the whole voice, each
+  // value step (Saw wrap, Pulse edges, clip step) gets a PolyBLEP correction
+  // and each slope corner (Triangle/AsymTriangle vertices, hard-clip
+  // shoulders) gets a PolyBLAMP correction, both 2-sample. `dt` = phase
+  // increment per sample (osc freq / sample rate); dt <= 0 disables all
+  // corrections (the naive shape, e.g. for the JS waveform-display mirror,
+  // which deliberately draws the ideal shape without BLEP ripple).
   template<typename T>
-  inline T Morph(T phase, T waveShape)
+  inline T Wrap01(T x) { x -= std::floor(x); return x < (T) 0. ? x + (T) 1. : x; }
+
+  // Residual for a unit-amplitude step. t = wrapped phase distance past the
+  // discontinuity (0..1); add (h * PolyBlep) for an upward jump of size h,
+  // subtract for a downward jump.
+  template<typename T>
+  inline T PolyBlep(T t, T dt)
+  {
+    if (t < dt)             { t /= dt;               return t + t - t * t - (T) 1.; }
+    if (t > (T) 1. - dt)    { t = (t - (T) 1.) / dt; return t * t + t + t + (T) 1.; }
+    return (T) 0.;
+  }
+
+  // Residual for a slope discontinuity (integral of PolyBlep). Add
+  // (deltaSlope * dt * PolyBlamp), deltaSlope = change in the waveform's slope
+  // in value-per-cycle units; a small non-negative hump, so a negative
+  // deltaSlope (concave-down vertex, e.g. a triangle peak) rounds it off.
+  template<typename T>
+  inline T PolyBlamp(T t, T dt)
+  {
+    if (t < dt)          { t = t / dt - (T) 1.;        return (T) (-1. / 3.) * t * t * t; }
+    if (t > (T) 1. - dt) { t = (t - (T) 1.) / dt + (T) 1.; return (T) (1. / 3.) * t * t * t; }
+    return (T) 0.;
+  }
+  // ---------------------------------------------------------------------------
+
+  // dt = phase increment per sample (osc freq / sample rate), for the
+  // band-limiting corrections above. Pass 0 for the naive (pre-2026-09-01) shape.
+  template<typename T>
+  inline T Morph(T phase, T waveShape, T dt = (T) 0.)
   {
     waveShape = std::max((T) 0., std::min((T) 4., waveShape));
+    dt = std::min(std::max(dt, (T) 0.), (T) 0.49); // keep the 1-dt BLEP window sane near Nyquist
 
     if (waveShape < (T) 1.)
     {
       T frac = waveShape;
       T a = Sine(phase), b = Triangle(phase);
-      return a * (1. - frac) + b * frac;
+      T out = a * (1. - frac) + b * frac;
+      // Only the Triangle part aliases (Sine is already band-limited): round
+      // its two vertices, scaled by the blend amount. Triangle() slope is +-4
+      // val/cycle; peak at phase 0.25 (slope +4 -> -4), trough at 0.75 (-4 -> +4).
+      if (dt > (T) 0. && frac > (T) 0.)
+      {
+        out += frac * (T) -8. * dt * PolyBlamp(Wrap01(phase - (T) 0.25), dt);
+        out += frac * (T)  8. * dt * PolyBlamp(Wrap01(phase - (T) 0.75), dt);
+      }
+      return out;
     }
     else if (waveShape < (T) kMorphSawStart)
     {
       T frac = (waveShape - (T) 1.) / ((T) kMorphSawStart - (T) 1.);
-      return AsymTriangle(phase, (T) 0.5 + (T) 0.5 * frac);
+      T r = (T) 0.5 + (T) 0.5 * frac;
+      T out = AsymTriangle(phase, r);
+      // AsymTriangle: rising slope +2/r, falling slope -2/(1-r) (val/cycle);
+      // vertices at phase = phi0 and phi0 + r. Clamp r for the slope magnitude
+      // only (position stays exact) so the near-saw end (r -> 1) doesn't blow
+      // up - that sliver hands straight over to the pure-Saw BLEP below.
+      if (dt > (T) 0.)
+      {
+        T phi0 = (T) 1. - r * (T) 0.5;
+        T rs = std::min(r, (T) 0.98);
+        T dSlope = (T) 2. / rs + (T) 2. / ((T) 1. - rs);
+        out += dSlope * dt * PolyBlamp(Wrap01(phase - phi0), dt);       // -2/(1-r) -> +2/r
+        out -= dSlope * dt * PolyBlamp(Wrap01(phase - phi0 - r), dt);   // +2/r -> -2/(1-r)
+      }
+      return out;
     }
     else if (waveShape <= (T) kMorphSawEnd)
     {
-      return Saw(phase);
+      // Saw() is phase-shifted +0.5, so its downward step of size 2 is at phase 0.5.
+      T out = Saw(phase);
+      if (dt > (T) 0.)
+        out -= PolyBlep(Wrap01(phase - (T) 0.5), dt);
+      return out;
     }
     else if (waveShape < (T) kMorphSquareEnd)
     {
@@ -217,6 +286,19 @@ namespace FirstSynthOsc
       // way through this segment and the Pulse segment below (same gain
       // reused there, since Pulse's RMS is always exactly 1 regardless of duty).
       T rmsK = std::sqrt((T) 1. - (T) 2. / ((T) 3. * k));
+      // Band-limit before the loudness-comp gain: the Saw's own step (size 2,
+      // downward, phase 0.5) plus the two clip shoulders - it enters the upper
+      // clip at phase 0.5/k (slope +2k -> 0) and leaves the lower clip at phase
+      // 1 - 0.5/k (slope 0 -> +2k). At k -> 1 the two BLAMPs collapse onto phase
+      // 0.5 and cancel, leaving just the Saw BLEP - continuous with the pure-Saw
+      // branch above.
+      if (dt > (T) 0.)
+      {
+        T corr = -PolyBlep(Wrap01(phase - (T) 0.5), dt);
+        corr += (T) -2. * k * dt * PolyBlamp(Wrap01(phase - (T) 0.5 / k), dt);
+        corr += (T)  2. * k * dt * PolyBlamp(Wrap01(phase - ((T) 1. - (T) 0.5 / k)), dt);
+        raw += corr;
+      }
       return raw * ((T) kMorphTargetRMS / rmsK);
     }
     else
@@ -227,7 +309,14 @@ namespace FirstSynthOsc
       // hard-clip segment above approaches at its own endpoint, so there's no
       // audible level jump at the segment boundary (see that segment's comment).
       T frac = (waveShape - (T) kMorphSquareEnd) / ((T) 4. - (T) kMorphSquareEnd);
-      T raw = Pulse(phase, (T) 0.5 - frac * (T) 0.4); // 0.5 -> 0.1 duty
+      T duty = (T) 0.5 - frac * (T) 0.4; // 0.5 -> 0.1 duty
+      T raw = Pulse(phase, duty);
+      // Band-limit both edges: rising +2 at phase 0, falling -2 at phase = duty.
+      if (dt > (T) 0.)
+      {
+        raw += PolyBlep(Wrap01(phase), dt);
+        raw -= PolyBlep(Wrap01(phase - duty), dt);
+      }
       return raw * (T) kMorphTargetRMS;
     }
   }
@@ -279,7 +368,12 @@ public:
   {
   public:
     Voice()
-    : mAMPEnv("gain", [&](){ mPhase1 = mPhase2 = 0.; }) // capture ok on RT thread?
+    : mAMPEnv("gain", [&](){
+#ifdef _DEBUG
+        if (mFixedPhase)
+#endif
+          mPhase1 = mPhase2 = 0.;
+      }) // capture ok on RT thread?
     , mRandSeed((uint32_t) (uintptr_t) this) // unique-ish per-voice seed so pooled voices don't draw identical Yuragi/noise sequences
     {
 //      DBGMSG("new Voice: %i control inputs.\n", static_cast<int>(mInputs.size()));
@@ -294,7 +388,10 @@ public:
 
     void Trigger(double level, bool isRetrigger) override
     {
-      mPhase1 = mPhase2 = 0.;
+#ifdef _DEBUG
+      if (mFixedPhase)
+#endif
+        mPhase1 = mPhase2 = 0.;
 
       // Key velocity removed for now (user request) - every note triggers at full
       // envelope depth (1.) regardless of the incoming MIDI velocity's `level`
@@ -523,12 +620,14 @@ public:
         T mixNoise = std::max((T) 0., std::min((T) 1., mMixNoise + matDest[kMatDstNoiseLevel]));
 
         // Wave Shape 1/2: additive on the existing 0-4 morph value, +-4 range (full
-        // sweep) at +-100% amount - Morph() itself already clamps to [0,4].
-        T osc1Out = FirstSynthOsc::Morph<T>(mPhase1, mWaveShape1 + matDest[kMatDstWaveShape1] * (T) 4.);
+        // sweep) at +-100% amount - Morph() itself already clamps to [0,4]. The
+        // trailing arg is the per-sample phase increment (freq/sampleRate), used
+        // for the PolyBLEP/PolyBLAMP band-limiting inside Morph().
+        T osc1Out = FirstSynthOsc::Morph<T>(mPhase1, mWaveShape1 + matDest[kMatDstWaveShape1] * (T) 4., (T) phaseInc1);
         mPhase1 += phaseInc1;
         mPhase1 -= std::floor(mPhase1);
 
-        T osc2Out = FirstSynthOsc::Morph<T>(mPhase2, mWaveShape2 + matDest[kMatDstWaveShape2] * (T) 4.);
+        T osc2Out = FirstSynthOsc::Morph<T>(mPhase2, mWaveShape2 + matDest[kMatDstWaveShape2] * (T) 4., (T) phaseInc2);
         mPhase2 += phaseInc2;
         mPhase2 -= std::floor(mPhase2);
 
@@ -540,9 +639,11 @@ public:
         // pitch is in octaves relative to A4 (see osc1Freq/osc2Freq above), so at 100%
         // Key Follow (mFilterKeyFollow == 1) this term exactly matches osc pitch's own
         // octave shift - same additive-octave convention as Env Amount/Filter LFO here.
-        // Matrix Filter Cutoff destination: additive octaves, same +-8-octave-at-100%
-        // scale as Filter Env Amount above.
-        T cutoffHz = mFilterCutoff * std::pow((T) 2., envAmountOctaves * filterEnvVal + inputs[kModFilterLFO][i] + mFilterKeyFollow * (T) pitch + matDest[kMatDstFilterCutoff] * (T) 8.);
+        // Matrix Filter Cutoff destination: additive octaves, same +-4-octave-at-100%
+        // scale as the dedicated Filter LFO's own Depth knob (kModFilterLFO term
+        // above) - so an LFO patched via the matrix sweeps the same range as one
+        // patched via the dedicated Filter LFO section, at matching 100% settings.
+        T cutoffHz = mFilterCutoff * std::pow((T) 2., envAmountOctaves * filterEnvVal + inputs[kModFilterLFO][i] + mFilterKeyFollow * (T) pitch + matDest[kMatDstFilterCutoff] * (T) 4.);
         cutoffHz = std::max((T) 20., std::min((T) (mSampleRate * 0.49), cutoffHz));
         // Matrix Filter Resonance destination: additive on the 0-100 normalized
         // resonance scale (matching the knob's own %), +-100 range at +-100% amount,
@@ -661,6 +762,17 @@ public:
     T mHPFCutoff = 20.;
     T mYuragiRate = 0.; // 0-1 (0-100%), see kParamYuragi - width of per-note random pitch/pan
     T mVelocityCurve = 0.; // -1..1, see kParamVelocityCurve - shapes mVelocity in Trigger()
+#ifdef _DEBUG
+    // 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's
+    // own comment in FirstSynth.h. true (default) = existing behavior, phase
+    // reset to 0 on every note-on/retrigger (both sites below, mPhase1/mPhase2
+    // are private so this flag must live up here to stay settable from
+    // SetOscPhaseMode()'s ForEachVoice, same as mMatrixSource etc. above).
+    // false = free-running, phase carries over from wherever this pooled
+    // voice's oscillator last left off, matching typical free-run analog
+    // oscillator behavior.
+    bool mFixedPhase = true;
+#endif
 
   private:
     T mPhase1 = 0.;
@@ -834,6 +946,18 @@ public:
   {
     mSynth.AddMidiMsgToQueue(msg);
   }
+
+#ifdef _DEBUG
+  // 2026-08-26 dev-only tool (user request) - see kMsgTagSetOscPhaseMode's own
+  // comment in FirstSynth.h. Broadcasts to every pooled voice's mFixedPhase,
+  // same ForEachVoice pattern SetParam() below uses for other per-voice state.
+  void SetOscPhaseMode(bool fixed)
+  {
+    mSynth.ForEachVoice([fixed](SynthVoice& voice) {
+      dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mFixedPhase = fixed;
+    });
+  }
+#endif
 
   void SetParam(int paramIdx, double value)
   {

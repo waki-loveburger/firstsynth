@@ -7252,3 +7252,60 @@ go back to stock. FirstSynth is the only consumer of the modified versions
 This is hygiene only; it does NOT remove the need for the fork (the IPlugAPP/
 WebView framework changes can't live in a project). Not done this session -
 waiting on the go-ahead.
+
+## Band-limited oscillators - PolyBLEP/PolyBLAMP in Morph() (2026-09-01)
+
+User: "音がどうしても全体的に硬く感じる" - the synth sounds hard/brittle overall
+and they couldn't place why. Diagnosis: `FirstSynthOsc::Morph()` generated every
+non-sine shape naively (`Saw` = raw ramp, `Pulse` = raw step, `AsymTriangle` =
+raw corners, the saw->square segment = a literal `std::max(-1,min(1,Saw*k))`
+hard-clip). No band-limiting anywhere and no oversampling, so all the
+above-Nyquist energy folded back as inharmonic aliasing - the classic "digital
+hardness", worst toward the Saw/Square/Pulse end of Wave Shape and worst on
+high notes. Contributing but secondary: the Moog ladder's 2026-08-16 recalibration
+opened it up (used to secretly roll off ~2 octaves low, was masking the alias
+hash); `mFixedPhase=true` phase-locking every note-on; no osc drift/detune.
+
+**Fix (this session): 2-sample PolyBLEP + PolyBLAMP corrections inside Morph().**
+- New helpers in `namespace FirstSynthOsc` (`FirstSynth_DSP.h`, above `Morph`):
+  `Wrap01`, `PolyBlep` (unit-step residual), `PolyBlamp` (slope-discontinuity
+  residual, = integral of blep).
+- `Morph()` gained a 3rd arg `T dt` (per-sample phase increment = freq/sampleRate),
+  **defaulted to 0** so `dt<=0` reproduces the exact pre-change naive shape (the
+  JS `waveform-display.js` mirror is left untouched on purpose - a static preview
+  should draw the ideal shape, not BLEP ripple). `dt` is clamped to 0.49 inside.
+- Per segment: Sine->Tri = BLAMP on the two triangle vertices x blend amount;
+  AsymTri = BLAMP on both vertices, slope-diff `2/r + 2/(1-r)` with `r` clamped
+  to 0.98 for the magnitude only (positions exact); pure Saw = BLEP on the
+  size-2 down-step at phase 0.5; saw->square clip = Saw BLEP + BLAMP on the two
+  clip shoulders at phase `0.5/k` and `1-0.5/k` (Δslope ∓2k) - collapses onto the
+  pure-Saw BLEP as k->1, continuous across the seam; Pulse = BLEP on both edges
+  (rising +2 at phase 0, falling -2 at phase = duty).
+- Call sites in `Voice::ProcessSamplesAccumulating` pass `(T)phaseInc1` /
+  `(T)phaseInc2`.
+
+**Verified:**
+- Builds: app/vst3/clap x Debug/Release x64 all 0 errors / 0 warnings.
+- Standalone launches, process stays Responding.
+- Numerical spectral check (Python re-impl of the exact Morph math, f0≈1760 Hz /
+  MIDI 93, alias-energy vs harmonic-energy ratio, naive vs band-limited):
+  pure saw -12.9 -> -28.7 dB, saw>sq clip -15.8 -> -31.8 dB, square -14.7 ->
+  -30.6 dB, narrow pulse -13.2 -> -30.2 dB (all ≈ -16 dB better); sine>tri and
+  asymtri already clean, ~3-4 dB better from the vertex BLAMP. -30 dB is roughly
+  where 2-sample PolyBLEP tops out; minBLEP or 2x oversampling would go further
+  if the user still wants more after listening.
+
+**Not done / open:** user hasn't A/B'd by ear yet in a host. If still too bright,
+next levers (in order): flip `mFixedPhase` to free-run (dev switch already there),
+re-check Moog Hz calibration, add gentle osc drift, then consider oversampling.
+
+## Before release - open TODO (2026-09-01)
+
+Not blocking, but must not ship without these (user's call, noted here so it
+isn't forgotten):
+- **Factory-preset switch**: currently a plain always-visible control used while
+  developing with a mixed pool of finished + WIP presets in one folder. Give it
+  a dev-only / clearly-temporary look (or gate it) before release.
+- **Phase-free (`kMsgTagSetOscPhaseMode` / `mFixedPhase`) switch**: still a
+  `#ifdef _DEBUG` dev A/B selector under evaluation. Decide its final form
+  (drop it, or promote to a real param with proper UI) before release.
