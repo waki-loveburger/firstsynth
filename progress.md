@@ -7300,6 +7300,59 @@ next levers (in order): ~~phase free-run~~ (tried + removed, see the 2026-09-01
 entry below - inaudible here), Osc Drift (added 2026-09-01), re-check Moog Hz
 calibration, unison (on hold), then consider oversampling / minBLEP.
 
+## Release prep + Inno Setup installer (2026-09-04)
+
+User decided to ship FirstSynth first (ahead of 8-Control v1.3), all three
+formats (VST3 + CLAP + Standalone), via an Inno Setup installer.
+
+**Release build verified:** app / vst3 / clap all build Release|x64 with 0
+errors / 0 warnings (the 2026-08-25 WebView Release fix holds). Launched the
+Release Standalone - GUI renders, responsive, `★ sfx` factory badge shows.
+Release exe is 1 MB, **statically linked CRT** (no `VCRUNTIME140.dll` /
+`MSVCP140.dll` imports) -> **no VC++ redist needed**. No `icudtl.dat` produced
+or needed (WebView2 uses the system runtime). Only external dependency is the
+**WebView2 Runtime** itself.
+
+**Licensing:** `THIRD-PARTY-NOTICES.txt` (VST3 SDK MIT + Steinberg ASIO
+trademark line + ASIO SDK agreement ref) already added in `e31950a`. Per the
+Steinberg checklist the "bundled documentation" placement satisfies the ASIO
+§3.1 attribution clause - **no About-box change needed**. The installer drops
+the notices file next to the Standalone AND inside each plugin folder.
+
+**Version:** `config.h` = `1.0.0`, `eni_config.h` = `firstsynth/1.0.0` (already
+consistent - no 8-Control-style stale version). eni_auth endpoints all
+production (`api.` / `auth.easyandnicewaki.com`).
+
+**New: `installer/`** -
+- `FirstSynth.iss` - Inno Setup 6, bilingual (JA/EN), components vst3/clap/app.
+  VST3 -> `{commoncf64}\VST3\FirstSynth.vst3`, CLAP -> `{commoncf64}\CLAP`,
+  Standalone -> `{autopf}\EASYANDNICE INSTRUMENTS\FirstSynth` + Start Menu (&
+  optional desktop) shortcut. WebView2 runtime check in `[Code]`: if the
+  EdgeUpdate client key is absent, runs a bundled bootstrapper
+  (`redist\MicrosoftEdgeWebview2Setup.exe`, auto-detected via `#ifexist`) or
+  shows a download-link message. Manual PDFs are `skipifsourcedoesntexist` so
+  it still compiles without them.
+- `stage.ps1` - assembles `installer\src\` from `build-win\` Release outputs
+  (whole VST3 bundle; CLAP binary + its own `Resources\`; the Release exe as
+  `FirstSynth.exe` + its own `Resources\`; `THIRD-PARTY-NOTICES.txt`).
+- `FirstSynth.ico` (copied from `resources\`), `README.md` (full build steps).
+- `.gitignore` extended: `installer/{src,installer_output,redist}/` +
+  `installer/*.pdf` are artifacts, not committed.
+
+**Compiled a test installer:** `FirstSynth_setup_v1.0.0.exe`, 2.7 MB (without
+the manual PDFs). Not run/installed (system-modifying - needs the user).
+
+**Left for the user before release:**
+1. Export `manual\*.docx` -> `installer\FirstSynth 取扱説明書.pdf` /
+   `installer\FirstSynth User Manual.pdf` (no LibreOffice/pandoc here).
+2. (optional) drop `MicrosoftEdgeWebview2Setup.exe` in `installer\redist\`.
+3. Re-run `stage.ps1` + ISCC, then **test-install on a clean-ish Windows box**:
+   fresh `%LOCALAPPDATA%` (presets seed on first run), login -> licence unlock,
+   VST3/CLAP load in a real DAW, Standalone plays. `sfx` etc. show under the
+   correct names.
+4. Decide: code signing (skip for indie v1.0?), `PLUG_COPYRIGHT_STR` 2025->2026,
+   distribution channel (Gumroad / BOOTH / site).
+
 ## Factory presets: repo set + first-run seeding + dev-tool polish (2026-09-04)
 
 User finalized the shipping preset set (37, ★-marked in-app via `_factory.txt`)

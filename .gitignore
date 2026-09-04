@@ -1,2 +1,9 @@
 private/
 build-win/
+
+# installer build artifacts (staged binaries, compiled setup, downloaded redist,
+# exported manual PDFs) - keep only FirstSynth.iss / stage.ps1 / FirstSynth.ico / README.md
+installer/src/
+installer/installer_output/
+installer/redist/
+installer/*.pdf
