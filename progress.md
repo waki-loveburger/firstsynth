@@ -7342,6 +7342,18 @@ production (`api.` / `auth.easyandnicewaki.com`).
 **Compiled a test installer:** `FirstSynth_setup_v1.0.0.exe`, 2.7 MB (without
 the manual PDFs). Not run/installed (system-modifying - needs the user).
 
+**Stale template metadata fixed (2026-09-04):** the shipped Standalone `.exe`
+version resource (`resources/main.rc` VERSIONINFO) was still iPlug2 boilerplate -
+`0.0.1` / `CompanyName "AcmeInc"` / `LegalCopyright "Copyright 2020 Acme Inc"`.
+Now `1.0.0` / `EASYANDNICE` / `Copyright 2026 EASYANDNICE` (verified on the
+rebuilt exe). `config.h` `PLUG_COPYRIGHT_STR` bumped 2025 -> 2026. The 7
+`resources/FirstSynth-*.plist` files (macOS only, not shipping now) had
+`Copyright 2025 Acme Inc` -> fixed to `Copyright 2026 EASYANDNICE` for future
+Mac builds. NOTE a naming inconsistency to resolve: `PLUG_MFR` / rc / plist say
+`EASYANDNICE` (kept - `PLUG_MFR` is a technical id, risky to change), but the
+installer `.iss` publisher is `EASYANDNICE INSTRUMENTS`; the Program Files
+folder and Start Menu group use the longer form.
+
 **Left for the user before release:**
 1. Export `manual\*.docx` -> `installer\FirstSynth 取扱説明書.pdf` /
    `installer\FirstSynth User Manual.pdf` (no LibreOffice/pandoc here).
@@ -7350,8 +7362,8 @@ the manual PDFs). Not run/installed (system-modifying - needs the user).
    fresh `%LOCALAPPDATA%` (presets seed on first run), login -> licence unlock,
    VST3/CLAP load in a real DAW, Standalone plays. `sfx` etc. show under the
    correct names.
-4. Decide: code signing (skip for indie v1.0?), `PLUG_COPYRIGHT_STR` 2025->2026,
-   distribution channel (Gumroad / BOOTH / site).
+4. Decide: code signing (OV/EV cert vs ship unsigned - to discuss with Ito
+   alongside the distribution channel; Gumroad / BOOTH / site also with Ito).
 
 ## Factory presets: repo set + first-run seeding + dev-tool polish (2026-09-04)
 
