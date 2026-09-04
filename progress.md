@@ -7339,11 +7339,26 @@ in the chunk).
   dev-gated - end users see ★ on the 37 factory presets vs none on their own
   saved presets, a useful factory-vs-mine distinction.
 
-Build: app/vst3/clap Debug x64 all clean. **Follow-up for the user:** the 37
-presets have mixed param counts (some predate HPF Cutoff / EQ Bypass / Delay
-tempo-sync / Osc Drift); the 2026-09-01 preset-load-resets-to-default fix means
-those load fine with the newer params defaulted, but re-saving all 37 on the
-current build would make them full-length/consistent.
+Build: app/vst3/clap Debug x64 all clean.
+
+### Factory presets normalised to the current param count (2026-09-04)
+
+8 of the 37 were short (7 at 113 doubles, `5th Strings` at 114; `kNumParams`
+is now 117 = a plain LE-float64 per param, no header, EParams order). Extended
+them in place with the trailing params' plain defaults:
+`kParamEQBypass`=0, `kParamDelayTimeTempo`=11 (`LFO<>::k1`),
+`kParamDelayTimeMode`=0, `kParamOscDrift`=0 - verified by decoding the tails
+back, and cross-checked against the 28 already-full presets (which show real
+tuned values there, e.g. Moog bass has OscDrift 11.2%). Done to both the repo
+`presets/` and the working `%LOCALAPPDATA%\FirstSynth\Presets\` set.
+`sfx.preset` is only 70 doubles (pre-dates ~half the synth, incl. the
+2026-07-22 `kParamLooperSpeed` removal/renumber) - too old to hand-extend
+safely; **left for the user to open + re-save in the app, or drop from the
+factory set.** IMPORTANT: the `%LOCALAPPDATA%` folder is virtualised for the
+Claude sandbox (see the cross-project "Windows %LOCALAPPDATA% tool
+discrepancy" note) - Python/bash see a filtered, inconsistent view of it;
+only the PowerShell tool sees the real folder. All live-folder preset work
+must go through PowerShell.
 
 ## Before release - open TODO (2026-09-01)
 
