@@ -7382,6 +7382,18 @@ still fans the final values out to the DSP; `OnRestoreState()` still does the UI
 This also future-proofs the next appended param. Verified: builds clean;
 standalone relaunches fine (screenshot).
 
+## AW keyboard mode: octave shift back to Z/X (2026-09-02)
+
+User: in the AW computer-keyboard mode *only*, octave shift should be Z (down) /
+X (up) again. This reverses the AW half of the 2026-08-03 "move all 3 modes to
+F1/F2 for consistency" change - Wicki-Hayden (F1/F2 grid transpose, Z/X are note
+keys there) and C-System (F1/F2 octave) are untouched. `resources/web/index.html`
+`EnableComputerKeyboardInput()` keydown handler, the `else` (AW) branch: keys are
+now `KeyZ`/`KeyX`, with `F1`/`F2` kept as aliases so the interim muscle memory
+still works. Z/X are not in `kKeyToNoteOffset` so there's no clash with note
+input. Debug Standalone loads index.html from disk at runtime (no rebuild needed
+to test); VST3/CLAP bundles need a rebuild for their copied `resources/web`.
+
 **Band-limiting + Osc Drift confirmed adopted by the user (2026-09-01).** After
 evaluating in Standalone the user said keep both. Rebuilt all real targets
 (app/vst3/clap, Debug) once BespokeSynth was closed - the installed VST3 at

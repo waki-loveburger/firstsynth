@@ -1717,16 +1717,19 @@
           if (key === 'F1') { wickiTransposeSteps = Math.max(-8, wickiTransposeSteps - 1); e.preventDefault(); return; }
           if (key === 'F2') { wickiTransposeSteps = Math.min(8, wickiTransposeSteps + 1); e.preventDefault(); return; }
         } else if (keyboardMode === 'csystem') {
-          // Simple flat +-12-semitone-per-press octave shift (same convention as
-          // the default AW mode's Z/X keys) - unlike Wicki-Hayden, C-System has no
-          // alternating-interval grid quirk to replicate from Hex MIDI.
+          // Simple flat +-12-semitone-per-press octave shift - unlike Wicki-Hayden,
+          // C-System has no alternating-interval grid quirk to replicate from Hex
+          // MIDI. Stays on F1/F2 (Z/X are not note keys in this mode either, but
+          // the user only asked to move AW mode back to Z/X - 2026-09-02).
           if (key === 'F1') { keyboardOctaveShift = Math.max(-4, keyboardOctaveShift - 1); e.preventDefault(); return; }
           if (key === 'F2') { keyboardOctaveShift = Math.min(4, keyboardOctaveShift + 1); e.preventDefault(); return; }
         } else {
-          // F1/F2 octave shift (changed from Z/X 2026-08-03 per user request, to
-          // match the same keys used by Wicki-Hayden/C-System modes for consistency).
-          if (key === 'F1') { keyboardOctaveShift = Math.max(-4, keyboardOctaveShift - 1); e.preventDefault(); return; }
-          if (key === 'F2') { keyboardOctaveShift = Math.min(4, keyboardOctaveShift + 1); e.preventDefault(); return; }
+          // AW mode octave shift: Z = down, X = up (2026-09-02, user request -
+          // moved back from the F1/F2 the 2026-08-03 "consistency" change had
+          // used; Z/X are not note keys in kKeyToNoteOffset so this is safe).
+          // F1/F2 kept as an alias so muscle memory from the interim still works.
+          if (key === 'KeyZ' || key === 'F1') { keyboardOctaveShift = Math.max(-4, keyboardOctaveShift - 1); e.preventDefault(); return; }
+          if (key === 'KeyX' || key === 'F2') { keyboardOctaveShift = Math.min(4, keyboardOctaveShift + 1); e.preventDefault(); return; }
         }
 
         const offsetMap = keyboardMode === 'wicki' ? kWickiHaydenKeyToNoteOffset
