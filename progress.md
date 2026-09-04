@@ -7351,14 +7351,17 @@ them in place with the trailing params' plain defaults:
 back, and cross-checked against the 28 already-full presets (which show real
 tuned values there, e.g. Moog bass has OscDrift 11.2%). Done to both the repo
 `presets/` and the working `%LOCALAPPDATA%\FirstSynth\Presets\` set.
-`sfx.preset` is only 70 doubles (pre-dates ~half the synth, incl. the
+`sfx.preset` was only 70 doubles (pre-dates ~half the synth, incl. the
 2026-07-22 `kParamLooperSpeed` removal/renumber) - too old to hand-extend
-safely; **left for the user to open + re-save in the app, or drop from the
-factory set.** IMPORTANT: the `%LOCALAPPDATA%` folder is virtualised for the
-Claude sandbox (see the cross-project "Windows %LOCALAPPDATA% tool
-discrepancy" note) - Python/bash see a filtered, inconsistent view of it;
-only the PowerShell tool sees the real folder. All live-folder preset work
-must go through PowerShell.
+safely; the **user re-saved it in the app** (now 117 doubles, tail decodes to
+the expected EQBypass=0 / DelayTimeTempo=11 / DelayTimeMode=0 / OscDrift=0).
+All 37 factory presets are now full length. IMPORTANT: the `%LOCALAPPDATA%`
+folder is isolated for the Claude sandbox (see the cross-project "Windows
+%LOCALAPPDATA% tool discrepancy" note) - **even the PowerShell tool** did not
+see the app's live-folder saves this session (the user's app writes never
+showed up); the user had to copy `sfx.preset` from their real
+`%LOCALAPPDATA%\FirstSynth\Presets\` into the repo `presets/` from their own
+terminal. Verify live-folder state by asking the user, not via Claude's tools.
 
 ## Before release - open TODO (2026-09-01)
 
