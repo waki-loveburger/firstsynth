@@ -1486,7 +1486,11 @@
       const btn = document.getElementById('factoryToggleBtn');
       if (!btn) return;
       const isFactory = currentPresetName && factoryPresetNames.has(currentPresetName);
-      btn.textContent = (isFactory ? '★' : '☆') + ' Factory';
+      // "(dev)" + the dashed/muted style below make it unmistakable that this is
+      // a build-time authoring tool, not a shipping control - it's already
+      // #ifdef _DEBUG-gated in FirstSynth.cpp (never revealed in a Release
+      // build), this is belt-and-braces for anyone seeing a Debug build.
+      btn.textContent = (isFactory ? '★' : '☆') + ' Factory (dev)';
       btn.disabled = !currentPresetName;
     }
 
@@ -2650,7 +2654,7 @@
          Starting hidden (rather than starting visible and hiding it later) means
          a Release build can never show it even briefly, e.g. if that call were
          ever slow or failed for some reason. -->
-    <button class="page-nav-btn" id="factoryToggleBtn" onclick="ToggleCurrentPresetFactory()" title="Mark/unmark the selected preset as a factory preset" style="display: none;">&#9734; Factory</button>
+    <button class="page-nav-btn" id="factoryToggleBtn" onclick="ToggleCurrentPresetFactory()" title="DEV ONLY (Debug builds): mark/unmark the selected preset as a shipped factory preset - writes _factory.txt" style="display: none; border-style: dashed; opacity: 0.75;">&#9734; Factory (dev)</button>
     <!-- computer-keyboard-as-MIDI (EnableComputerKeyboardInput()) is Standalone-only,
          so this dropdown is hidden by default and only revealed from that same
          Standalone-only entry point - see its own comment. margin-left separates it

@@ -1,0 +1,7 @@
+# Preset files are a raw little-endian dump of doubles (no header) - they contain
+# 0x0A / 0x0D bytes that autocrlf would otherwise corrupt. Never treat as text.
+*.preset binary
+
+# The factory-marks sidecar: plain name-per-line, must stay LF so C++
+# ReadFactoryMarks()/WriteFactoryMarks() and the bundled copy always agree.
+presets/_factory.txt text eol=lf

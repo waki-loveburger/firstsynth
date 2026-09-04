@@ -1,0 +1,37 @@
+5th Strings
+808
+Airly
+BP Pad
+Brass
+Fat Pad
+Fuwa fuwa
+Harp
+Hihat
+kick
+kick2
+kick3
+Koto
+Koto2
+Lead
+Lead2
+Lead3
+Moog bass
+Organ1
+Organ2
+Futon Pad
+Random Pad
+Water
+Strings
+Toy piano
+snap
+Piano2
+Poly mod
+poly1
+poly2
+Sine Tribe
+Seq
+poly3
+sfx
+Dream
+Synth2
+Wood Pluck

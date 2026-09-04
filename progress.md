@@ -7300,14 +7300,58 @@ next levers (in order): ~~phase free-run~~ (tried + removed, see the 2026-09-01
 entry below - inaudible here), Osc Drift (added 2026-09-01), re-check Moog Hz
 calibration, unison (on hold), then consider oversampling / minBLEP.
 
+## Factory presets: repo set + first-run seeding + dev-tool polish (2026-09-04)
+
+User finalized the shipping preset set (37, ★-marked in-app via `_factory.txt`)
+and asked for all five of: (1) ship only those 37, (2) an automatic filter from
+a working folder, (3) commit them to the repo, (4) make the Factory button
+dev-only, (5) all of the above. Also renamed two of the 37 to Title Case:
+`seq`→`Seq`, `synth2`→`Synth2` (filename *is* the preset name - no name stored
+in the chunk).
+
+- **Repo `presets/`** now holds exactly the 37 `.preset` + a normalised
+  `_factory.txt` (LF, no BOM - PowerShell `Set-Content -Encoding utf8` had
+  earlier written it BOM+CRLF, which `ReadFactoryMarks` tolerates for `\r` but
+  not the BOM on line 1). The 29 orphaned 2026-07-29 `testNN`/`perc`/`synth_test`
+  files (never referenced by any build) were removed. New **`.gitattributes`**:
+  `*.preset binary` (raw double dump - autocrlf would corrupt it) and
+  `presets/_factory.txt text eol=lf`.
+- **`scripts/collect-factory-presets.ps1`** (item 2) - reads a working folder's
+  `_factory.txt`, copies just the marked `.preset` into `presets/`, prunes any
+  no-longer-marked ones, writes a normalised `_factory.txt`. Run it after
+  changing marks in-app. `-WhatIf` supported.
+- **`postbuild-win.bat`** (item 1) - new `RESOURCES_PRESETS_SRC=%BUILD_DIR%\..\presets`,
+  xcopied to `Resources\presets\` next to every built binary (app / vst3 bundle /
+  clap), same 6 spots as `resources\web`. Verified: all 4 install locations get
+  38 files.
+- **`SeedFactoryPresets()`** (`FirstSynth.cpp`, called from the ctor) - resolves
+  the bundled dir the same way `LoadIndexHtml` does (Debug: project `presets\`
+  via `__FILE__`; Release-Win: `GetCurrentModuleDirWin()+"\Resources\presets"`),
+  copies any `.preset`/`_factory.txt` not already in `GetPresetsDir()`
+  (`%LOCALAPPDATA%\FirstSynth\Presets`), guarded by a one-time
+  `.factory_seeded_v1` marker so a user's later deletion sticks (bump the suffix
+  if the shipped set ever changes). Verified live: removed 3 presets + cleared
+  the marker → relaunch re-seeded exactly those 3, no dupes, no crash.
+- **Factory button** (item 4) - was already `#ifdef _DEBUG` + `SetDevBuild()`
+  gated (never shown in a Release build). Added belt-and-braces: label is now
+  "★/☆ Factory (dev)", dashed border, 0.75 opacity, DEV-ONLY title text.
+- ★ badge on dropdown options (`factoryPresetNames`) is deliberately *not*
+  dev-gated - end users see ★ on the 37 factory presets vs none on their own
+  saved presets, a useful factory-vs-mine distinction.
+
+Build: app/vst3/clap Debug x64 all clean. **Follow-up for the user:** the 37
+presets have mixed param counts (some predate HPF Cutoff / EQ Bypass / Delay
+tempo-sync / Osc Drift); the 2026-09-01 preset-load-resets-to-default fix means
+those load fine with the newer params defaulted, but re-saving all 37 on the
+current build would make them full-length/consistent.
+
 ## Before release - open TODO (2026-09-01)
 
 Not blocking, but must not ship without these (user's call, noted here so it
 isn't forgotten):
-- **Factory-preset switch**: currently a plain always-visible control (the
-  `#ifdef _DEBUG` ★ Factory button, revealed by `SetDevBuild(true)`) used while
-  developing with a mixed pool of finished + WIP presets in one folder. Give it
-  a dev-only / clearly-temporary look (or gate it) before release.
+- ~~Factory-preset switch~~ - resolved 2026-09-04: already Release-hidden
+  (`#ifdef _DEBUG`); additionally relabelled "Factory (dev)" with a dashed
+  dev-tool style. See the 2026-09-04 entry above.
 - ~~Phase-free switch~~ - resolved 2026-09-01: the dev A/B toggle was **removed**
   entirely (user confirmed the fixed/free difference is inaudible in this synth -
   phase 0 is a zero crossing for the Morph waveforms and there's no unison to

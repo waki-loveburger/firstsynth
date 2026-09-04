@@ -59,6 +59,15 @@ REM of the Debug-only compile-time __FILE__ path. %BUILD_DIR% is always
 REM "<project root>\build-win", so its parent is the project root.
 set RESOURCES_WEB_SRC=%BUILD_DIR%\..\resources\web
 
+REM 2026-09-04: the factory preset set (37 *.preset + _factory.txt), bundled
+REM next to every built binary the same way as resources\web above. FirstSynth's
+REM SeedFactoryPresets() (FirstSynth.cpp) copies any that are missing into
+REM %LOCALAPPDATA%\FirstSynth\Presets\ on first run - Release resolves this via
+REM GetCurrentModuleDirWin()+"\Resources\presets", Debug reads the project
+REM presets\ folder directly. Regenerate presets\ from a working folder with
+REM scripts\collect-factory-presets.ps1.
+set RESOURCES_PRESETS_SRC=%BUILD_DIR%\..\presets
+
 REM 2026-08-25 user report: Debug and Release Standalone builds used to both
 REM copy to the same "%NAME%_%PLATFORM%.exe" in %BUILD_DIR%, silently
 REM overwriting each other - whichever config was built most recently is
@@ -93,6 +102,10 @@ if %PLATFORM% == "ARM64EC" (
       echo copying WebView resources to build dir: %BUILD_DIR%\Resources\web
       xcopy /E /H /Y /I "%RESOURCES_WEB_SRC%" "%BUILD_DIR%\Resources\web\" >nul
     )
+    if exist "%RESOURCES_PRESETS_SRC%" (
+      echo copying factory presets to build dir: %BUILD_DIR%\Resources\presets
+      xcopy /E /H /Y /I "%RESOURCES_PRESETS_SRC%" "%BUILD_DIR%\Resources\presets\" >nul
+    )
   )
 
   if %FORMAT% == ".dll" (
@@ -125,6 +138,9 @@ if %PLATFORM% == "ARM64EC" (
       echo copying WebView resources into VST3 bundle
       xcopy /E /H /Y /I "%RESOURCES_WEB_SRC%" "%BUILD_DIR%\%NAME%.vst3\Contents\arm64ec-win\Resources\web\" >nul
     )
+    if exist "%RESOURCES_PRESETS_SRC%" (
+      xcopy /E /H /Y /I "%RESOURCES_PRESETS_SRC%" "%BUILD_DIR%\%NAME%.vst3\Contents\arm64ec-win\Resources\presets\" >nul
+    )
     if exist %VST3_ARM64EC_PATH% (
       echo copying VST3 bundle to ARM64EC VST3 Plugins folder ...
       call %CREATE_BUNDLE_SCRIPT% %VST3_ARM64EC_PATH%\%NAME%.vst3 %VST_ICON% %FORMAT%
@@ -154,6 +170,9 @@ if %PLATFORM% == "ARM64EC" (
       if exist "%RESOURCES_WEB_SRC%" (
         echo copying WebView resources next to CLAP plugin
         xcopy /E /H /Y /I "%RESOURCES_WEB_SRC%" "%CLAP_ARM64EC_PATH%\Resources\web\" >nul
+      )
+      if exist "%RESOURCES_PRESETS_SRC%" (
+        xcopy /E /H /Y /I "%RESOURCES_PRESETS_SRC%" "%CLAP_ARM64EC_PATH%\Resources\presets\" >nul
       )
     )
   )
@@ -190,6 +209,10 @@ if %PLATFORM% == "x64" (
       echo copying WebView resources to build dir: %BUILD_DIR%\Resources\web
       xcopy /E /H /Y /I "%RESOURCES_WEB_SRC%" "%BUILD_DIR%\Resources\web\" >nul
     )
+    if exist "%RESOURCES_PRESETS_SRC%" (
+      echo copying factory presets to build dir: %BUILD_DIR%\Resources\presets
+      xcopy /E /H /Y /I "%RESOURCES_PRESETS_SRC%" "%BUILD_DIR%\Resources\presets\" >nul
+    )
   )
 
   if %FORMAT% == ".dll" (
@@ -222,6 +245,9 @@ if %PLATFORM% == "x64" (
       echo copying WebView resources into VST3 bundle
       xcopy /E /H /Y /I "%RESOURCES_WEB_SRC%" "%BUILD_DIR%\%NAME%.vst3\Contents\x86_64-win\Resources\web\" >nul
     )
+    if exist "%RESOURCES_PRESETS_SRC%" (
+      xcopy /E /H /Y /I "%RESOURCES_PRESETS_SRC%" "%BUILD_DIR%\%NAME%.vst3\Contents\x86_64-win\Resources\presets\" >nul
+    )
     if exist %VST3_X64_PATH% (
       echo copying VST3 bundle to 64bit VST3 Plugins folder ...
       call %CREATE_BUNDLE_SCRIPT% %VST3_X64_PATH%\%NAME%.vst3 %VST_ICON% %FORMAT%
@@ -251,6 +277,9 @@ if %PLATFORM% == "x64" (
       if exist "%RESOURCES_WEB_SRC%" (
         echo copying WebView resources next to CLAP plugin
         xcopy /E /H /Y /I "%RESOURCES_WEB_SRC%" "%CLAP_X64_PATH%\Resources\web\" >nul
+      )
+      if exist "%RESOURCES_PRESETS_SRC%" (
+        xcopy /E /H /Y /I "%RESOURCES_PRESETS_SRC%" "%CLAP_X64_PATH%\Resources\presets\" >nul
       )
     )
   )

@@ -24,6 +24,11 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   if (mLicence.valid && eni::ShouldRefresh(mLicence.exp))
     eni::RefreshInBackground();
 
+  // Populate a fresh install's preset folder from the bundled factory set, once.
+  // Pure filesystem work, no editor/WebView needed - safe here, and this runs
+  // before OnWebContentLoaded()'s first SendPresetList() in every format.
+  SeedFactoryPresets();
+
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
   GetParam(kParamNoteGlideTime)->InitDouble("Note Glide Time", 0., 0., 2000., 0.1, "ms", IParam::kFlagsNone, "", IParam::ShapePowCurve(3.));
   // 2026-08-26 user request: adopted Pigments' own Attack/Decay/Release knob
@@ -338,6 +343,81 @@ void FirstSynth::GetPresetsDir(WDL_String& path)
 
   std::error_code ec;
   std::filesystem::create_directories(path.Get(), ec); // no-op if it already exists; ec deliberately ignored, matches this file's other fopen()-and-check-for-null style rather than throwing
+}
+
+// Where postbuild-win.bat put the bundled factory presets, resolved the same way
+// IPlugWebViewEditorDelegate::LoadIndexHtml() resolves its own Resources\web:
+// Debug reads the project source tree directly (compile-time __FILE__), Release
+// on Windows looks next to this binary's own module. Anything else -> "".
+#if defined OS_WIN && !defined _DEBUG
+extern bool GetCurrentModuleDirWin(WDL_String& outDir); // IPlugWebView_win.cpp, decl mirrors IPlugWebViewEditorDelegate.h
+#endif
+
+void FirstSynth::GetBundledPresetsDir(WDL_String& path)
+{
+  path.Set("");
+#if !defined OS_WIN
+  return; // Windows-only for now, matching the rest of this file's packaging path assumptions
+#elif defined _DEBUG
+  std::filesystem::path p = std::filesystem::path(__FILE__).parent_path() / "presets";
+  path.Set(p.string().c_str());
+#else
+  WDL_String moduleDir;
+  if (GetCurrentModuleDirWin(moduleDir))
+  {
+    moduleDir.Append("\\Resources\\presets");
+    path.Set(moduleDir.Get());
+  }
+#endif
+}
+
+void FirstSynth::SeedFactoryPresets()
+{
+  WDL_String src;
+  GetBundledPresetsDir(src);
+  if (src.GetLength() == 0)
+    return;
+
+  std::error_code ec;
+  if (!std::filesystem::is_directory(src.Get(), ec))
+    return;
+
+  // One-time guard: once seeded, a user's later deletion of a factory preset
+  // must stick. Suffix is a version - bump it if the shipped factory set is
+  // ever changed/expanded so the new ones get seeded on the next launch.
+  WDL_String marker;
+  INIPath(marker, "FirstSynth");
+  marker.Append("\\.factory_seeded_v1");
+  if (std::filesystem::exists(marker.Get(), ec))
+    return;
+
+  WDL_String dstDir;
+  GetPresetsDir(dstDir); // also creates it
+  std::filesystem::path dst(dstDir.Get());
+
+  for (const auto& entry : std::filesystem::directory_iterator(src.Get(), ec))
+  {
+    if (ec)
+      break;
+    if (!entry.is_regular_file(ec))
+      continue;
+    const std::filesystem::path& p = entry.path();
+    const std::string ext = p.extension().string();
+    const std::string name = p.filename().string();
+    if (ext != ".preset" && name != "_factory.txt")
+      continue;
+
+    std::filesystem::path target = dst / p.filename();
+    if (!std::filesystem::exists(target, ec))
+      std::filesystem::copy_file(p, target, ec); // best-effort; a failed copy just means that preset isn't seeded, not a crash
+  }
+
+  FILE* fp = fopen(marker.Get(), "wb");
+  if (fp)
+  {
+    fputc('1', fp);
+    fclose(fp);
+  }
 }
 
 // Preset names double as filenames and arrive from free-text WebView input (UTF8,

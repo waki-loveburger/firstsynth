@@ -312,6 +312,15 @@ private:
   // beyond what iPlug2's own IPlugParameter storage already provides.
   void GetPresetsDir(WDL_String& path); // creates the directory if it doesn't exist yet
   void SendPresetList(); // enumerates *.preset files in GetPresetsDir(), pushes kMsgTagPresetList
+  // Factory preset seeding (2026-09-04): the shipped factory set (see the repo's
+  // presets\ folder + scripts\collect-factory-presets.ps1) is bundled next to
+  // every built binary as Resources\presets\ by postbuild-win.bat. On first run
+  // SeedFactoryPresets() copies any *.preset (and _factory.txt) that isn't
+  // already in GetPresetsDir() into it, so a fresh install has the factory
+  // sounds. Guarded by a one-time marker so a user can permanently delete a
+  // factory preset - bump the marker suffix if the shipped set changes.
+  void GetBundledPresetsDir(WDL_String& path); // "" if it can't be resolved (e.g. non-Windows non-debug)
+  void SeedFactoryPresets();
   void SavePresetAs(const char* rawName); // sanitizes rawName, writes <dir>/<name>.preset, refreshes the list. Overwrites in place if that file already exists (no separate "overwrite" path needed).
   void LoadPresetByName(const char* rawName); // sanitizes rawName, reads <dir>/<name>.preset, restores it
   void DeletePresetByName(const char* rawName); // sanitizes rawName, removes <dir>/<name>.preset if present, refreshes the list
