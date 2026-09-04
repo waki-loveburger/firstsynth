@@ -7409,6 +7409,21 @@ in the chunk).
 
 Build: app/vst3/clap Debug x64 all clean.
 
+### Manuals updated for post-2026-08-03 changes (2026-09-04)
+
+Both `manual\*.docx` (JP + EN) refreshed for changes since they were written
+(2026-08-03), via unzip -> edit `word/document.xml` -> rezip (single-run
+paragraphs, so plain string replacement; XSD-validated, 82->82 paragraphs):
+1. **FILTER** - was "filter type (LP-BP-HP) + 24dB mode"; the LP/BP/HP switch
+   and 24dB toggle were removed 2026-08-16. Now: Cutoff/Q = a 4-pole ladder
+   lowpass (the word "Moog" deliberately left out per the user), plus a new
+   **HPF Cutoff** = fixed highpass in series, no resonance.
+2. **MIXER** - added **Bend Range** (0-12 st) and **Osc Drift** (0 = off).
+3. **Keyboard** - octave shift F1/F2 -> **Z/X** (the 2026-09-02 AW-mode revert).
+4. **DELAY** - noted the new **Sync** (tempo-sync) toggle.
+User declined adding: keyboard-mode list, factory-preset note, Wave-morph note.
+PDF export still on the user (no soffice/pandoc here).
+
 ### Factory presets normalised to the current param count (2026-09-04)
 
 8 of the 37 were short (7 at 113 doubles, `5th Strings` at 114; `kNumParams`
