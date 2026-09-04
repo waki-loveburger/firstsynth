@@ -18,15 +18,16 @@ Inno Setup 6 installer for FirstSynth (VST3 + CLAP + Standalone), EASYANDNICE IN
    powershell -ExecutionPolicy Bypass -File installer\stage.ps1
    ```
 
-3. **Export the manuals to PDF** and put them in this `installer\` folder, with
-   these exact names (they are referenced by the `.iss`):
+3. **Export the manuals to PDF.** Open each `manual\*.docx` in Word ->
+   File -> Save As -> PDF, keeping the default location (next to the `.docx`)
+   and the same base name, so you get:
 
-   - `FirstSynth 取扱説明書.pdf`   (from `manual\FirstSynth 取扱説明書.docx`)
-   - `FirstSynth User Manual.pdf`  (from `manual\FirstSynth User Manual.docx`)
+   - `manual\FirstSynth 取扱説明書.pdf`
+   - `manual\FirstSynth User Manual.pdf`
 
-   Open each `.docx` in Word -> File -> Save As -> PDF. If a PDF is missing the
-   installer still compiles and installs, it just omits that manual + its Start
-   Menu shortcut.
+   The `.iss` reads them from `..\manual\`. If a PDF is missing the installer
+   still compiles and installs, it just omits that manual + its Start Menu
+   shortcut. (`manual\*.pdf` is git-ignored - regenerate per release.)
 
 4. **(optional) WebView2 bootstrapper.** The plugin UI needs the Microsoft Edge
    WebView2 Runtime (preinstalled on Windows 11, usually present on Windows 10).

@@ -6,4 +6,4 @@ build-win/
 installer/src/
 installer/installer_output/
 installer/redist/
-installer/*.pdf
+manual/*.pdf

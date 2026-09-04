@@ -94,8 +94,8 @@ Source: "src\app\Resources\*"; DestDir: "{app}\Resources"; Flags: ignoreversion 
 ; ---- shared (docs / icon / manuals) - always installed ----
 Source: "src\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "FirstSynth.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "FirstSynth 取扱説明書.pdf"; DestDir: "{app}\manual"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "FirstSynth User Manual.pdf"; DestDir: "{app}\manual"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\manual\FirstSynth 取扱説明書.pdf"; DestDir: "{app}\manual"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\manual\FirstSynth User Manual.pdf"; DestDir: "{app}\manual"; Flags: ignoreversion skipifsourcedoesntexist
 
 #ifdef HaveWebView2Bootstrapper
 Source: "redist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsWebView2
