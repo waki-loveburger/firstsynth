@@ -16,8 +16,14 @@
       /* knob dial colors - separate from the general theme vars above so
          knob-control.js's SVG (fill/stroke) can reference them directly; see that
          file's constructor for how they're consumed */
-      --knob-circle-fill: #18202d;
-      --knob-circle-stroke: #eef1f5;
+      /* 2026-09-06: light-mode knob face was dark navy (#18202d), which put a
+         dark-blue pointer/value-arc on a dark disc = poor contrast and hard to
+         read at a glance. Now the face matches the page surface (--bg) and is
+         defined by a mid-grey outline instead, so the coloured pointer/arc
+         (blue/green/orange) pops. Dark mode keeps its dark face (works fine
+         there) - see :root[data-theme="dark"] below. */
+      --knob-circle-fill: var(--bg);
+      --knob-circle-stroke: #9aa4b2;
       --knob-track-bg: #c9ced6;
       --knob-pointer: #2563eb;
       --knob-value-arc: #2563eb;
