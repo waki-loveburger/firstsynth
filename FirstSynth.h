@@ -238,6 +238,13 @@ enum EParams
   // Placed next to Bend Range in the Mixer area of the UI. 0 = off (no change
   // for existing presets). See FirstSynth_DSP.h's Voice::mOscDrift.
   kParamOscDrift,
+  // added 2026-09-06, appended per this project's "never renumber" convention -
+  // global key transpose in semitones (-24..+24, default 0), shifting every
+  // played note (MIDI and computer-keyboard alike). A live-performance control:
+  // shown as a "< n >" stepper next to the keyboard-mode dropdown, nudged from
+  // the computer keyboard by C/V or F3/F4, and - like the Looper knobs -
+  // deliberately preserved across an in-app preset Load (see LoadPresetByName()).
+  kParamKeyTranspose,
   kNumParams
 };
 

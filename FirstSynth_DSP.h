@@ -514,7 +514,12 @@ public:
     {
       // inputs to the synthesizer can just fetch a value every block, like this:
 //      double gate = mInputs[kVoiceControlGate].endValue;
-      double pitch = mInputs[kVoiceControlPitch].endValue;
+      // Key Transpose (2026-09-06, kParamKeyTranspose) - folded straight into
+      // `pitch` (in octaves) so it shifts everything downstream that keys off
+      // note pitch: both oscillators, Filter Key Follow, and the Key Follow
+      // matrix source, exactly as if the note had been played that many
+      // semitones higher/lower.
+      double pitch = mInputs[kVoiceControlPitch].endValue + (mKeyTranspose / 12.0);
       double pitchBend = mInputs[kVoiceControlPitchBend].endValue;
 
       // Modulation Matrix - Osc1/Osc2 Pitch destinations, evaluated once per block
@@ -787,6 +792,7 @@ public:
     // voices don't drift in lockstep. Applied per block in
     // ProcessSamplesAccumulating; never reset on Trigger.
     T mOscDrift = 0.;
+    T mKeyTranspose = 0.; // semitones, see kParamKeyTranspose - added into `pitch` in ProcessSamplesAccumulating
     double mDriftPhA1 = 0., mDriftPhB1 = 0., mDriftPhA2 = 0., mDriftPhB2 = 0.;
 
   private:
@@ -1114,6 +1120,11 @@ public:
       case kParamOscDrift:
         mSynth.ForEachVoice([value](SynthVoice& voice) {
           dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mOscDrift = (T) value / 100.;
+        });
+        break;
+      case kParamKeyTranspose:
+        mSynth.ForEachVoice([value](SynthVoice& voice) {
+          dynamic_cast<IPlugInstrumentDSP::Voice&>(voice).mKeyTranspose = (T) value;
         });
         break;
       case kParamFilterSustain:

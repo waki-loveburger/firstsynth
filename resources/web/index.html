@@ -224,6 +224,11 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      /* wrap rather than clip / trigger a horizontal scrollbar if the row gets
+         too wide for the window (e.g. the Debug-only Factory button + the
+         keyboard dropdown + the transpose stepper all at once, 2026-09-06) */
+      flex-wrap: wrap;
+      row-gap: 8px;
       margin-bottom: 16px;
     }
 
@@ -246,6 +251,29 @@
       background-color: var(--surface-subtle);
       border-color: var(--accent);
       color: var(--accent);
+    }
+
+    /* Key Transpose stepper - "< n >" next to the keyboard-mode dropdown (2026-09-06).
+       Compact (smaller than .preset-nav-btn) so it's ~footprint-neutral in the
+       preset bar - that row was already near the window edge. */
+    .key-transpose {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-left: 6px;
+    }
+    .key-transpose > button {
+      width: 24px;
+      height: 24px;
+      font-size: 13px;
+    }
+    .key-transpose > span {
+      min-width: 26px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
     }
 
     .preset-select {
@@ -1417,6 +1445,25 @@
       return sign * (6 * absN - (absN % 2));
     }
 
+    // Global key transpose (kParamKeyTranspose, id 117) - a real automatable
+    // param, so no localStorage: the value is kept by the host (autosave.state /
+    // DAW project) and pushed back here via OnParamChange(). keyTranspose mirrors
+    // it for the +/- stepper and the C/V/F3/F4 keys.
+    const kKeyTransposeParamId = 117;
+    const kKeyTransposeRange = 24; // +-24 semitones, matches InitInt in FirstSynth.cpp
+    let keyTranspose = 0;
+    function SetKeyTransposeDisplay(n) {
+      keyTranspose = n;
+      const el = document.getElementById('keyTransposeVal');
+      if (el) el.textContent = n > 0 ? '+' + n : String(n);
+    }
+    function AdjustKeyTranspose(delta) {
+      const n = Math.max(-kKeyTransposeRange, Math.min(kKeyTransposeRange, keyTranspose + delta));
+      if (n === keyTranspose) return;
+      SetKeyTransposeDisplay(n);
+      SPVFUI(kKeyTransposeParamId, (n + kKeyTransposeRange) / (2 * kKeyTransposeRange));
+    }
+
     function ApplyKeyboardModeLabel() {
       const sel = document.getElementById('keyboardModeSelect');
       if (sel) sel.value = keyboardMode;
@@ -1715,6 +1762,12 @@
         if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
         const key = e.code;
 
+        // Key transpose - F3/F4 in every mode (they're never note keys); C/V too
+        // in AW mode only (C/V *are* note keys in Wicki-Hayden and C-System - see
+        // their offset maps - so they're handled in the AW branch below instead).
+        if (key === 'F3') { AdjustKeyTranspose(-1); e.preventDefault(); return; }
+        if (key === 'F4') { AdjustKeyTranspose(1); e.preventDefault(); return; }
+
         if (keyboardMode === 'wicki') {
           // Z/X/etc are real note keys in this mode - F1/F2 do the grid transpose
           // instead (see WickiTransposeOffset's own comment for why this isn't a
@@ -1740,6 +1793,10 @@
           // F1/F2 kept as an alias so muscle memory from the interim still works.
           if (key === 'KeyZ' || key === 'F1') { keyboardOctaveShift = Math.max(-4, keyboardOctaveShift - 1); e.preventDefault(); return; }
           if (key === 'KeyX' || key === 'F2') { keyboardOctaveShift = Math.min(4, keyboardOctaveShift + 1); e.preventDefault(); return; }
+          // C/V = key transpose down/up (AW mode only; not note keys here). F3/F4
+          // do the same in every mode, handled above.
+          if (key === 'KeyC') { AdjustKeyTranspose(-1); e.preventDefault(); return; }
+          if (key === 'KeyV') { AdjustKeyTranspose(1); e.preventDefault(); return; }
         }
 
         const offsetMap = keyboardMode === 'wicki' ? kWickiHaydenKeyToNoteOffset
@@ -2338,6 +2395,14 @@
         return;
       }
 
+      // Key Transpose stepper (no knob-control) - host-driven changes (initial
+      // load, autosave restore, DAW automation, and the C++-side preserve-across-
+      // preset-Load re-push) land here as a normalized value.
+      if (param === kKeyTransposeParamId) {
+        SetKeyTransposeDisplay(Math.round(value * (2 * kKeyTransposeRange)) - kKeyTransposeRange);
+        return;
+      }
+
       // Modulation Matrix Source/Dest <select>s - these have no knob-control at
       // all (see SetMatrixEnum()'s own comment for the enum-normalization
       // convention), so without this branch host-driven changes (initial load,
@@ -2668,11 +2733,21 @@
          right of Preset/Save/Save As/Delete, not squeezed into the header itself).
          Converted from a 2-way toggle button to a 3-way <select> (2026-08-03) to
          accommodate the added C-System mode alongside AW/Wicki-Hayden. -->
-    <select id="keyboardModeSelect" class="preset-select" onchange="SetKeyboardMode(this.value)" style="display: none; margin-left: 24px;">
+    <select id="keyboardModeSelect" class="preset-select" onchange="SetKeyboardMode(this.value)" style="display: none; margin-left: 14px;">
       <option value="aw">Keyboard: AW</option>
       <option value="wicki">Keyboard: Wicki-Hayden</option>
       <option value="csystem">Keyboard: C-System</option>
     </select>
+    <!-- Global key transpose in semitones (kParamKeyTranspose). Nudged from the
+         computer keyboard by C/V (AW mode) or F3/F4 (any mode) - see
+         EnableComputerKeyboardInput(). Shown in every build (not Standalone-only
+         like the dropdown above) since it's a real automatable param useful in a
+         DAW too. -->
+    <span class="key-transpose" title="Key transpose (semitones). Computer keyboard: C / V (or F3 / F4)">
+      <button class="preset-nav-btn" onclick="AdjustKeyTranspose(-1)" title="Transpose down a semitone">&#8249;</button>
+      <span id="keyTransposeVal">0</span>
+      <button class="preset-nav-btn" onclick="AdjustKeyTranspose(1)" title="Transpose up a semitone">&#8250;</button>
+    </span>
   </div>
 
   <div id="page-synth" class="layout-grid">

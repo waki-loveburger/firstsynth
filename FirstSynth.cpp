@@ -232,6 +232,11 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   // different rates, so a 2-osc patch slowly thickens/beats even without a
   // unison feature. See FirstSynth_DSP.h's Voice for the actual wander math.
   GetParam(kParamOscDrift)->InitDouble("Osc Drift", 0., 0., 100., 0.01, "%", IParam::kFlagsNone, "MIX");
+  // 2026-09-06: global key transpose in semitones, +-2 octaves. Live-performance
+  // control (stepper next to the keyboard-mode dropdown; C/V or F3/F4 keys) -
+  // shifts the pitch of every played note. Preserved across an in-app preset
+  // Load (see LoadPresetByName()), same as the Looper knobs.
+  GetParam(kParamKeyTranspose)->InitInt("Key Transpose", 0, -24, 24, "st", IParam::kFlagsNone, "");
 
 #ifdef WEBVIEW_EDITOR_DELEGATE
   SetEnableDevTools(true);
@@ -569,19 +574,20 @@ void FirstSynth::LoadPresetByName(const char* rawName)
     std::vector<uint8_t> buf((size_t) fileSize);
     fread(buf.data(), 1, buf.size(), fp);
 
-    // Looper controls (Feedback/Mix/Reverse) are a live-performance tool, not
-    // part of "the patch" - user report 2026-09-04: switching presets while a
-    // loop is running yanks these out from under you (e.g. Feedback jumping to
-    // whatever the newly-picked preset happened to have it at), changing the
-    // loop's behavior mid-performance. Captured here and re-applied below,
-    // after the preset's own values have already landed - the preset file
-    // itself is untouched (SavePresetAs still writes these 3 normally, and a
-    // DAW's own full project recall via UnserializeState still restores them -
-    // this override is scoped to the in-app preset *Load* action only).
-    const int kLooperParams[] = { kParamLooperReverse, kParamLooperFeedback, kParamLooperMix };
-    double looperVals[3];
-    for (int i = 0; i < 3; i++)
-      looperVals[i] = GetParam(kLooperParams[i])->Value();
+    // Some controls are live-performance tools, not part of "the patch": the
+    // Looper knobs (Feedback/Mix/Reverse - user report 2026-09-04: switching
+    // presets mid-loop yanked these out from under you) and Key Transpose
+    // (2026-09-06 - loading a preset shouldn't drop your transpose). Captured
+    // here and re-applied below, after the preset's own values have already
+    // landed. The preset file itself is untouched (SavePresetAs still writes
+    // these normally, and a DAW's own full project recall via UnserializeState
+    // still restores them) - this override is scoped to the in-app preset
+    // *Load* action only.
+    const int kPreservedOnLoad[] = { kParamLooperReverse, kParamLooperFeedback, kParamLooperMix, kParamKeyTranspose };
+    constexpr int kNumPreservedOnLoad = (int) (sizeof(kPreservedOnLoad) / sizeof(kPreservedOnLoad[0]));
+    double preservedVals[kNumPreservedOnLoad];
+    for (int i = 0; i < kNumPreservedOnLoad; i++)
+      preservedVals[i] = GetParam(kPreservedOnLoad[i])->Value();
 
     // Reset every param to its compiled-in default before applying the preset's
     // bytes. A .preset file is a headerless positional dump of NParams() doubles
@@ -601,15 +607,15 @@ void FirstSynth::LoadPresetByName(const char* rawName)
     chunk.PutBytes(buf.data(), (int) buf.size());
     UnserializeState(chunk, 0);
 
-    // Put the pre-Load Looper values back and re-fire OnParamChange so the DSP
-    // (mLooper) picks them up too, undoing UnserializeParams' own
-    // OnParamReset(kPresetRecall) push of the preset's values a moment ago.
-    // Done before OnRestoreState() so the WebView UI's knobs land on the
-    // correct (preserved) values in the same push, no visible jump-then-jump-back.
-    for (int i = 0; i < 3; i++)
+    // Put the pre-Load values back and re-fire OnParamChange so the DSP picks
+    // them up too, undoing UnserializeParams' own OnParamReset(kPresetRecall)
+    // push of the preset's values a moment ago. Done before OnRestoreState() so
+    // the WebView UI lands on the correct (preserved) values in the same push,
+    // no visible jump-then-jump-back.
+    for (int i = 0; i < kNumPreservedOnLoad; i++)
     {
-      GetParam(kLooperParams[i])->Set(looperVals[i]);
-      OnParamChange(kLooperParams[i]);
+      GetParam(kPreservedOnLoad[i])->Set(preservedVals[i]);
+      OnParamChange(kPreservedOnLoad[i]);
     }
 
     OnRestoreState(); // pushes every restored param's new value to the WebView UI - same combo LoadAutoState() below uses

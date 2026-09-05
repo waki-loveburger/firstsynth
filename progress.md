@@ -7620,3 +7620,39 @@ derived entirely from reading `TryToChangeAudio()`'s logic against Ito's
 report and confirmed by tracing that `iParams.nChannels` (hence RtAudio's
 actual input requirement) is always 0 for a `PLUG_CHANNEL_IO "0-2"` plug-in.
 Ask Ito to re-test with this build.
+
+## Key Transpose added (2026-09-06)
+
+New `kParamKeyTranspose` (id 117, InitInt -24..+24 semitones, default 0;
+`kNumParams` now 118). A global transpose folded straight into `pitch` in
+`Voice::ProcessSamplesAccumulating` - shifts both oscillators, Filter Key
+Follow, and the Key Follow matrix source, i.e. exactly as if the note had been
+played that many semitones higher/lower. Per-voice `mKeyTranspose`, set via the
+usual `ForEachVoice` in `SetParam`.
+
+- **UI**: a compact `< n >` stepper in the preset bar, right of the
+  keyboard-mode dropdown (per user request). Shown in every build (not
+  Standalone-only like the dropdown) since it's a real automatable param.
+  `.preset-bar` got `flex-wrap: wrap` + tightened margins so the extra control
+  doesn't clip / trigger a horizontal scrollbar on a narrow window (the
+  Debug-only Factory button makes that row tight; Release has more room).
+  `AdjustKeyTranspose(delta)` clamps and calls `SPVFUI(117, norm)`;
+  `OnParamChange`'s new `param === 117` branch keeps the display synced with
+  autosave restore / DAW automation / the preserve-across-preset-Load re-push.
+- **Computer keyboard** (`EnableComputerKeyboardInput`, Standalone only):
+  **C / V** transpose down/up in AW mode (they're not note keys there);
+  **F3 / F4** do the same in every mode (never note keys). F1/F2 stay
+  octave/grid-shift, Z/X stay AW octave.
+- **Preserved across an in-app preset Load** (`LoadPresetByName`), alongside the
+  Looper knobs - loading a patch mid-performance shouldn't drop your transpose.
+  Still written to `.preset` by Save and restored by a DAW's own project recall.
+- The 37 factory presets are 117 doubles (one short) - `f904640`'s
+  reset-to-default-before-load makes transpose land on 0 when loading them,
+  which is the intended behaviour anyway.
+
+Builds clean (app/vst3/clap Debug x64). Verified live: stepper renders next to
+the keyboard dropdown, the value persists through `autosave.state` at 118
+doubles (param 117), and stays put across a launch/close cycle. **Not verified
+by ear / with the C/V/F3/F4 keys** - this session can't drive the native
+WebView; ask the user to confirm a transposed note actually sounds and the
+keys nudge the stepper.
