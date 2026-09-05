@@ -6,10 +6,13 @@ whether that's Claude or the user themselves.
 
 ## Project basics
 
-- Location: `C:\Users\a_wak\CLAP_plugin\FirstSynth` (sibling to `C:\Users\a_wak\CLAP_plugin\iPlug2`,
-  the framework checkout). Both must stay directly under `CLAP_plugin\` — the vcxproj files
-  were patched to use `..\..\iPlug2\...` relative paths (2 levels up + iPlug2), not iPlug2's
-  default `..\..\..\` (which assumes `Examples\ProjectName\projects\` nesting).
+- Location: `C:\Users\a_wak\CLAP_plugin\FirstSynth`, sibling to the `iPlug2` framework
+  checkout. The vcxproj files were patched to use `..\..\iPlug2\...` relative paths
+  (2 levels up + iPlug2), not iPlug2's default `..\..\..\` (which assumes
+  `Examples\ProjectName\projects\` nesting). **Only the sibling relation matters — the
+  parent folder does not have to be named `CLAP_plugin`** (verified 2026-09-05 by building
+  from `C:\Users\mito\repos\{firstsynth,iPlug2}` on a second machine with no project-file
+  edits at all). Every path in the build is relative or env-var based already.
 - **The iPlug2 checkout is a modified fork**, not stock upstream. As of 2026-08-29 it lives at
   the private repo `github.com/waki-loveburger/iPlug2` (remotes in that checkout: `origin` =
   that fork, `upstream` = `iPlug2/iPlug2`). On a fresh machine:
@@ -26,21 +29,44 @@ whether that's Claude or the user themselves.
   architecture, then heavily extended — see DSP section below).
 - Targets actively built/tested: Standalone app (`FirstSynth-app`) and CLAP (`FirstSynth-clap`).
   VST2/VST3/AAX vcxproj exist (patched for the same path issue) but aren't used.
-- Toolchain (Windows): VS Build Tools 2022 (C++ workload only, no IDE) + CMake + NuGet,
-  installed via winget. **Must build Debug config** — Release WebView loading is an
-  unfixed upstream iPlug2 bug on Windows.
+- Toolchain (Windows): VS Build Tools 2022 (C++ workload only, no IDE), installed via
+  winget. **CMake and NuGet are not needed** — nothing in the build uses CMake, and the
+  WebView2 / WIL NuGet packages are committed under `packages\` (confirmed 2026-09-05 on a
+  machine that had neither installed). Debug is the day-to-day config, but **Release works
+  too** — the old "must build Debug, Release WebView loading is broken" note predates the
+  fork's `39c6341d4` (`GetCurrentModuleDirWin()` resolution) and no longer applies; a
+  Release Standalone was built and run successfully 2026-09-05.
 
 ## Build commands
 
+`build.ps1` (repo root, added 2026-09-05) is the entry point — it finds MSBuild via
+vswhere instead of hard-coding its path, resolves everything from `$PSScriptRoot`, kills a
+running Standalone, and creates the CLAP folder if missing:
+
 ```
-MSBuild.exe "C:\Users\a_wak\CLAP_plugin\FirstSynth\FirstSynth.sln" -t:FirstSynth-app -p:Configuration=Debug -p:Platform=x64 -m
-MSBuild.exe "C:\Users\a_wak\CLAP_plugin\FirstSynth\FirstSynth.sln" -t:FirstSynth-clap -p:Configuration=Debug -p:Platform=x64 -m
+.\build.ps1                                       # Debug|x64 app + clap
+.\build.ps1 app clap vst3 -Configuration Release  # what the installer stages
+.\build.ps1 all -Rebuild
 ```
 
-Before building, kill any running instance first (postbuild copy silently fails with a
-file-in-use error otherwise): `Stop-Process -Name FirstSynth,FirstSynth_x64,REAPER -Force -ErrorAction SilentlyContinue`
+By hand, equivalently (note there is no `-t:FirstSynth-app:Build` — the solution metaproj
+exposes `<project>`, `<project>:Clean` and `<project>:Rebuild` only, and the bare name
+already means build; `:Build` fails with MSB4057):
+
+```
+MSBuild.exe FirstSynth.sln -t:FirstSynth-app -p:Configuration=Debug -p:Platform=x64 -m
+MSBuild.exe FirstSynth.sln -t:FirstSynth-clap -p:Configuration=Debug -p:Platform=x64 -m
+```
+
+Building by hand, kill any running instance first (postbuild copy silently fails with a
+file-in-use error otherwise, and the build still reports success — leaving a stale binary
+at exactly the path you then launch). **Match on `FirstSynth*`, not a fixed list**: the
+copy in `build-win\` is named after the configuration (`FirstSynth_x64.exe` for Debug but
+`FirstSynth_x64_Release.exe` otherwise), and a list missing the Release name cost an hour
+on 2026-09-05 diagnosing a framework fix that had in fact built correctly.
+`Get-Process -Name FirstSynth* | Stop-Process -Force`
 (only ask the user to close REAPER themselves — it's their own app, not disposable test
-tooling like the FirstSynth exe).
+tooling like the FirstSynth exe.)
 
 Standard workflow: build **both** targets after every change, without asking first. User
 verifies Standalone themselves (`build-win\FirstSynth_x64.exe`, or I launch
@@ -7620,3 +7646,56 @@ derived entirely from reading `TryToChangeAudio()`'s logic against Ito's
 report and confirmed by tracing that `iParams.nChannels` (hence RtAudio's
 actual input requirement) is always 0 for a `PLUG_CHANNEL_IO "0-2"` plug-in.
 Ask Ito to re-test with this build.
+
+### Re-tested on Ito's machine: confirmed fixed (2026-09-05)
+
+Answering the "ask Ito to re-test" above. Reproduced the original failure and
+then confirmed the fix, on the machine that hit it (`C:\Users\mito\repos\`,
+second machine — see README.md for its setup).
+
+Failure state, reproduced deliberately by unplugging the audio interface: a
+minimal RtAudio 6.0.1 probe built against this fork enumerated **2 output
+devices and 0 input devices** under DirectSound (`プライマリ サウンド ドライバー`
+as default output, plus the monitor's HDMI endpoint), while `settings.ini`
+still named a `Zenith 2` input device that no longer existed. Pre-`e625e021c`
+binaries showed `Please check the audio settings` and never reached
+`InitAudio()`.
+
+With `e625e021c`: no dialog, and the Standalone **plays audibly** through the
+monitor's HDMI output. Confirmed by ear, not just by CPU usage. So the fix is
+verified against the real condition, which couldn't be triggered on the
+authoring machine.
+
+One clarification worth recording: this is Standalone-only. `grep`-checked
+that neither `FirstSynth-clap.vcxproj` nor `FirstSynth-vst3.vcxproj` compiles
+`IPlugAPP_host.cpp` (only `-app` does), so DAW-hosted formats were never
+affected and don't need a rebuild on account of this.
+
+**Not yet tested: the shipped installer itself.** What was verified here is a
+locally built Release binary, not `FirstSynth_setup_v1.0.0.exe`. Installing
+that on a clean box — first-run preset seeding into an empty `%LOCALAPPDATA%`,
+licence unlock, VST3/CLAP loading in a real DAW — is still an open item.
+
+### Still open: Preferences sample-rate list is empty without an input device
+
+Same family as the above, **not** fixed by `e625e021c`, found while testing it.
+Filed as `github.com/waki-loveburger/iPlug2` issue #1.
+
+`IPlugAPP_dialog.cpp`'s `PopulateSampleRateList()` lists the *intersection* of
+the input and output device's supported rates, and the caller passes a
+default-constructed `inputDevInfo` when `mAudioInputDevIDs` is empty — so with
+no input device the combo is **always empty**. Measured on this machine with
+the interface unplugged: the output device offers 14 rates
+(44100/48000/96000/192000/…), input devices 0, and reading the dialog's combo
+boxes over Win32 gave Output Device 1 item, **Sampling Rate 0 items**.
+
+Why it matters for a customer without an audio interface: pick a high rate
+while an interface is connected, disconnect it, and the fallback output can't
+open that rate → silence → and Preferences can't fix it, because the list is
+empty. Only hand-editing `settings.ini` recovers. Hit exactly this today, at
+96000 on an HDMI output. ASIO is immune (one device serves both directions, so
+the intersection is non-empty); **DirectSound and WASAPI are not** — and
+DirectSound is the default a customer gets without ever opening Preferences.
+
+Suggested fix in the issue, in the same spirit as `e625e021c`: fall back to
+the output device's rates when the input side has none.
