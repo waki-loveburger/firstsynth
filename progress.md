@@ -7546,3 +7546,33 @@ evaluating in Standalone the user said keep both. Rebuilt all real targets
 are now refreshed with everything from this session (earlier the VST3
 install-copy had failed code 4 purely because BespokeSynth held the target file
 open - binary itself always compiled fine).
+
+## Preset Load no longer touches Looper Feedback/Mix/Reverse (2026-09-04)
+
+User report: switching presets while actively looping changed the loop's
+behavior mid-performance - `LoadPresetByName()` was overwriting
+`kParamLooperReverse`/`Feedback`/`Mix` with whatever the newly-picked preset
+had them at. These 3 knobs are a live-performance tool, not really "part of
+the patch" the way Osc/Filter/Env are - the user wants them to survive a
+preset switch untouched.
+
+**Fix, scoped to `LoadPresetByName()` only** (not `SavePresetAs()`, not
+`LoadAutoState()`, not a DAW's own project recall via `UnserializeState()` -
+those are unaffected, so the .preset file format and full-state semantics
+don't change): capture the 3 params' current values before the existing
+reset-to-default + `UnserializeState()` sequence, then after it, `Set()` them
+back and manually re-fire `OnParamChange()` for each (undoing
+`UnserializeParams`'s own `OnParamReset(kPresetRecall)` push of the preset's
+stored values into `mLooper` a moment earlier) - done before `OnRestoreState()`
+so the WebView UI's knobs land on the correct value in one push, no visible
+jump-then-jump-back. A saved preset file still has real Looper values in it
+(Save is untouched) - they're just never applied by the in-app Load action.
+
+Builds clean (app/vst3/clap Debug x64). **Not verified interactively** - this
+session has no way to drive the native WebView GUI (mouse/keyboard) to
+actually load two presets with different Looper settings and confirm the
+knobs don't move; verified by code reading only (traced the exact sequence
+against `UnserializeParams`'s `OnParamReset` behavior and `OnParamChange`'s
+`kParamLooperReverse/Feedback/Mix` cases). **Ask the user to confirm**: start
+a loop, set Feedback/Mix/Reverse to something distinctive, switch to a preset
+known to have different Looper values saved, and check the knobs stay put.

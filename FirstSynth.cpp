@@ -569,6 +569,20 @@ void FirstSynth::LoadPresetByName(const char* rawName)
     std::vector<uint8_t> buf((size_t) fileSize);
     fread(buf.data(), 1, buf.size(), fp);
 
+    // Looper controls (Feedback/Mix/Reverse) are a live-performance tool, not
+    // part of "the patch" - user report 2026-09-04: switching presets while a
+    // loop is running yanks these out from under you (e.g. Feedback jumping to
+    // whatever the newly-picked preset happened to have it at), changing the
+    // loop's behavior mid-performance. Captured here and re-applied below,
+    // after the preset's own values have already landed - the preset file
+    // itself is untouched (SavePresetAs still writes these 3 normally, and a
+    // DAW's own full project recall via UnserializeState still restores them -
+    // this override is scoped to the in-app preset *Load* action only).
+    const int kLooperParams[] = { kParamLooperReverse, kParamLooperFeedback, kParamLooperMix };
+    double looperVals[3];
+    for (int i = 0; i < 3; i++)
+      looperVals[i] = GetParam(kLooperParams[i])->Value();
+
     // Reset every param to its compiled-in default before applying the preset's
     // bytes. A .preset file is a headerless positional dump of NParams() doubles
     // (see this file's preset-format comment / progress.md) - a preset saved by
@@ -586,6 +600,18 @@ void FirstSynth::LoadPresetByName(const char* rawName)
     IByteChunk chunk;
     chunk.PutBytes(buf.data(), (int) buf.size());
     UnserializeState(chunk, 0);
+
+    // Put the pre-Load Looper values back and re-fire OnParamChange so the DSP
+    // (mLooper) picks them up too, undoing UnserializeParams' own
+    // OnParamReset(kPresetRecall) push of the preset's values a moment ago.
+    // Done before OnRestoreState() so the WebView UI's knobs land on the
+    // correct (preserved) values in the same push, no visible jump-then-jump-back.
+    for (int i = 0; i < 3; i++)
+    {
+      GetParam(kLooperParams[i])->Set(looperVals[i]);
+      OnParamChange(kLooperParams[i]);
+    }
+
     OnRestoreState(); // pushes every restored param's new value to the WebView UI - same combo LoadAutoState() below uses
 
     mCurrentPresetName.Set(safeName.Get());
