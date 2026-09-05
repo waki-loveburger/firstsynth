@@ -61,9 +61,13 @@ class KnobControl extends HTMLElement {
     const circleStrokeWidth = parseFloat(this.getAttribute('circle-stroke-width')) || 2;
     const circleFillColor = this.getAttribute('circle-fill-color') || 'var(--knob-circle-fill, #18202d)';
     const pointerColor = this.getAttribute('pointer-color') || 'var(--knob-pointer, #2563eb)';
-    const pointerWidth = parseFloat(this.getAttribute('pointer-width')) || 4;
+    // 2026-09-06: pointer bumped 4->8, value-arc 3->5 for readability - the
+    // coloured position line and movement arc read thin against the lighter
+    // light-mode knob face (2026-09-06 change to --knob-circle-fill in index.html).
+    // value-arc-width also sets the neutral track-bg stroke below - same ring.
+    const pointerWidth = parseFloat(this.getAttribute('pointer-width')) || 8;
     const valueArcColor = this.getAttribute('value-arc-color') || 'var(--knob-value-arc, #2563eb)';
-    const valueArcWidth = parseFloat(this.getAttribute('value-arc-width')) || 3;
+    const valueArcWidth = parseFloat(this.getAttribute('value-arc-width')) || 5;
     const trackBgColor = this.getAttribute('track-bg-color') || 'var(--knob-track-bg, #c9ced6)';
     
     this.attachShadow({ mode: 'open' });
