@@ -7576,3 +7576,47 @@ against `UnserializeParams`'s `OnParamReset` behavior and `OnParamChange`'s
 `kParamLooperReverse/Feedback/Mix` cases). **Ask the user to confirm**: start
 a loop, set Feedback/Mix/Reverse to something distinctive, switch to a preset
 known to have different Looper values saved, and check the knobs stay put.
+
+## Standalone audio wouldn't start without an input device - fixed in the shared iPlug2 fork (2026-09-05)
+
+Ito (testing the v1.0.0 installer) reported the Standalone wouldn't make sound
+unless his machine had at least one audio input device configured - his audio
+interface exposed no usable WASAPI/ASIO input and he had no other input
+device at all.
+
+Root cause is in the **shared iPlug2 fork** (`C:\Users\a_wak\CLAP_plugin\iPlug2`,
+`IPlug/APP/IPlugAPP_host.cpp`, `TryToChangeAudio()`), not FirstSynth-specific
+code: it unconditionally tried to resolve a valid audio **input** device -
+falling back to the system default, or showing "Please check the audio
+settings" and refusing to start audio at all if there was no default input
+device either - regardless of whether the plug-in even declares audio input
+channels. FirstSynth is `PLUG_CHANNEL_IO "0-2"` (0 in, 2 out - an instrument,
+MIDI in/audio out only): `InitAudio()`/`OpenStream()` always end up with
+`iParams.nChannels==0` for it and pass a null input `StreamParameters` to
+RtAudio, so the input device id this code insisted on finding was never
+actually read - the requirement was pure dead weight that could still block
+startup entirely.
+
+**Fix** (iPlug2 fork commit `e625e021c`, pushed): gate the whole input-device
+requirement on `GetPlug()->MaxNChannels(ERoute::kInput) > 0`. Output-only
+plug-ins no longer need any input device (resolved or default) to start;
+`InitAudio()` is called with `inputID.value_or(0)` in that case (safe - that
+id is never read when `nChannels==0`). Plug-ins that *do* declare input
+channels (e.g. UeberLooper) are unaffected - identical behavior to before.
+
+Since this lives in the shared framework, it fixes every sibling instrument
+project's Standalone (SuiKinKutsu, GrainField, Compost, Chaoscape - all 0-input)
+automatically the next time each is rebuilt, no per-project porting needed -
+same distribution mechanism as the WebView2/preset-dialog fixes already in
+this fork (see progress.md's "Shared iPlug2 checkout published..." entry).
+
+**Rebuilt and re-staged for Ito:** app/vst3/clap Release|x64 all clean,
+`installer/stage.ps1` re-run, installer recompiled -> new
+`FirstSynth_setup_v1.0.0.exe` (3.5MB, SHA-256
+`6E680CD80250B54E2543FE75EA789CF8E53C9CF51BDCB728F177A48905A402FC`). **Not
+independently reproduced** - this session's own machine has a default input
+device, so the original failure couldn't be triggered locally; the fix was
+derived entirely from reading `TryToChangeAudio()`'s logic against Ito's
+report and confirmed by tracing that `iParams.nChannels` (hence RtAudio's
+actual input requirement) is always 0 for a `PLUG_CHANNEL_IO "0-2"` plug-in.
+Ask Ito to re-test with this build.
