@@ -8,11 +8,15 @@
 ;   3. Export the two manuals to PDF into installer\  (see README.md)
 ;   4. (optional) put MicrosoftEdgeWebview2Setup.exe in installer\redist\
 ;   5. Open this file in Inno Setup Compiler -> Build -> Compile
-;      -> installer\installer_output\FirstSynth_setup_v1.0.0.exe
+;      -> installer\installer_output\FirstSynth_setup_v1.0.0_rc2.exe
 ; =============================================================================
 
 #define MyAppName "FirstSynth"
 #define MyAppVersion "1.0.0"
+; Pre-release tag for the v1.0.0 test period only. Appended to the installer
+; filename so Ito's successive test builds are distinguishable; the installed
+; AppVersion stays "1.0.0". Set to empty for the actual public release.
+#define MyRcTag "_rc2"
 #define MyAppPublisher "EASYANDNICE INSTRUMENTS"
 #define MyAppURL "https://easyandnicewaki.com/"
 
@@ -36,7 +40,7 @@ SetupIconFile=FirstSynth.ico
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\FirstSynth.exe
 OutputDir=installer_output
-OutputBaseFilename=FirstSynth_setup_v{#MyAppVersion}
+OutputBaseFilename=FirstSynth_setup_v{#MyAppVersion}{#MyRcTag}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
