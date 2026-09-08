@@ -7656,3 +7656,55 @@ doubles (param 117), and stays put across a launch/close cycle. **Not verified
 by ear / with the C/V/F3/F4 keys** - this session can't drive the native
 WebView; ask the user to confirm a transposed note actually sounds and the
 keys nudge the stepper.
+
+## v1.0.0 release-prep pass + RC build discriminator (2026-09-08)
+
+User asked to nail down the remaining v1.0.0 items. This pass:
+
+**Rebuilt Release with everything since Ito's first test build.** The
+`FirstSynth_setup_v1.0.0.exe` Ito had been testing was built 2026-09-05,
+*before* the Key Transpose feature (`75f4636`) and the two light-mode knob
+fixes (`a33ad67` lighten faces, `cbb4e10` thicker pointer/arc). Rebuilt
+app/vst3/clap Release|x64 clean, re-ran `installer/stage.ps1`.
+
+**Manuals refreshed.** Added a Key Transpose paragraph to section 3 (Basic
+Operation) of both the JA and EN quick-start manuals (`33d9039`); the user
+then tweaked the JA wording themselves (added the AW-mode C/V note). All four
+UI screenshots (Synth/Effects/Matrix/Looper) retaken by the user and swapped
+into both `.docx` - the embedded `word/media/imageN.png` were replaced and
+each drawing's `<wp:extent>`/`<a:ext>` cy re-fitted to the new ~1385x850
+aspect (old shots were ~1377x758), keeping cx at 5580000 EMU so the images
+still span the same page width without distortion (`6b7b563`). PDFs
+re-exported by the user from Word (gitignored, bundled by the installer).
+
+**Version decision: stay at 1.0.0 for the public release.** Nothing has
+shipped publicly yet, so there is no released 1.0.0 to disambiguate from -
+folding the pre-release fixes (band-limiting, Osc Drift, Looper-preserve,
+Key Transpose, no-input fix, knob visibility) into 1.0.0 is normal. The only
+real problem was the *collision* with Ito's test build, also stamped
+"1.0.0". Resolved with a pre-release discriminator, NOT a version bump
+(`5a5906f`):
+- `resources/main.rc`: `FILEVERSION`/`PRODUCTVERSION` 4th field `0` -> `2`
+  (rc2; the 2026-09-05 build Ito first tested is rc1). The displayed version
+  strings (`VALUE "FileVersion"` / `"ProductVersion"`) stay `"1.0.0"`, so the
+  exe shows "File version 1.0.0.2 / Product version 1.0.0" in its Properties.
+- `config.h` `PLUG_VERSION_HEX` left at `0x00010000` on purpose - its low
+  byte is the user-facing *patch* number, so bumping it there would read as
+  1.0.**2** in a DAW's plug-in version field, which is not what we want.
+- `installer/FirstSynth.iss`: new `MyRcTag "_rc2"` appended to
+  `OutputBaseFilename` only; installed `AppVersion` stays `1.0.0`.
+- **For the actual public release**: reset the `main.rc` 4th field to `0` and
+  set `MyRcTag` to empty. (Both spots carry a comment saying so.)
+
+**Installer built**: `installer/installer_output/FirstSynth_setup_v1.0.0_rc2.exe`
+- 3.55 MB (3,717,993 bytes), SHA-256
+`37536C422C25EC7734FEA6B4F9AC9BA72BC6B320D577D935F84C061D433EC83C`.
+Bundled Standalone exe is FILEVERSION 1.0.0.2; both refreshed manual PDFs
+included. Ask Ito to bin the old `FirstSynth_setup_v1.0.0.exe` and test this
+one (it also carries the no-input-device startup fix from the shared iPlug2
+fork).
+
+**Still open before public release**: Ito's clean-Windows install test of
+`_rc2`; code-signing decision (unsigned / OV / EV); distribution channel
+(Gumroad / BOOTH / site); whether to also tag `v1.0.0-rc2` now (only `v1.00`
+exists) - `v1.0.0` proper waits for the actual ship.
