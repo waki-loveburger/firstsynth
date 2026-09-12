@@ -38,7 +38,11 @@
 // scrollbar reappears, it means real content changed, not that this number was
 // too tight.
 #define PLUG_WIDTH 1387
+#if defined(AUv3_API)
+#define PLUG_HEIGHT 757
+#else
 #define PLUG_HEIGHT 780
+#endif
 #define PLUG_FPS 60
 #define PLUG_SHARED_RESOURCES 0
 // Tried disabling this 2026-07-28 to fix Renoise/BespokeSynth opening the editor

@@ -223,6 +223,9 @@ public:
   void OnDownloadedFile(const char* path) override;
   void OnGetLocalDownloadPathForFile(const char* fileName, WDL_String& localPath) override;
   void OnWebContentLoaded() override;
+#if defined(AUv3_API) && defined(OS_MAC)
+  void OnParentWindowResize(int width, int height) override;
+#endif
 #endif
 
 private:

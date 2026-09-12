@@ -1,6 +1,7 @@
 #include "FirstSynth.h"
 #include "IPlug_include_in_plug_src.h"
 #include "IPlugPaths.h"
+#include "FirstSynthPresets.h"
 #include "LFO.h"
 #include <cmath>
 #include <algorithm>
@@ -23,6 +24,14 @@ FirstSynth::FirstSynth(const InstanceInfo& info)
   mLicenceValid.store(mLicence.valid, std::memory_order_relaxed);
   if (mLicence.valid && eni::ShouldRefresh(mLicence.exp))
     eni::RefreshInBackground();
+
+#ifdef OS_MAC
+  WDL_String bundledResources, appData;
+  BundleResourcePath(bundledResources, GetBundleID());
+  INIPath(appData, "FirstSynth");
+  if (bundledResources.GetLength() > 0)
+    firstsynth::SeedFactoryPresets(std::filesystem::path(bundledResources.Get()) / "presets", appData.Get());
+#endif
 
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
   GetParam(kParamNoteGlideTime)->InitDouble("Note Glide Time", 0., 0., 2000., 0.1, "ms", IParam::kFlagsNone, "", IParam::ShapePowCurve(3.));
@@ -296,7 +305,7 @@ void FirstSynth::OnReset()
 void FirstSynth::GetPresetsDir(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
-  path.Append("\\Presets");
+  path.Set((std::filesystem::path(path.Get()) / "Presets").string().c_str());
 
   std::error_code ec;
   std::filesystem::create_directories(path.Get(), ec); // no-op if it already exists; ec deliberately ignored, matches this file's other fopen()-and-check-for-null style rather than throwing
@@ -396,7 +405,7 @@ void FirstSynth::SavePresetAs(const char* rawName)
   GetPresetsDir(dir);
 
   WDL_String path;
-  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+  path.Set((std::filesystem::path(dir.Get()) / (std::string(safeName.Get()) + ".preset")).string().c_str());
 
   IByteChunk chunk;
   if (SerializeState(chunk))
@@ -423,7 +432,7 @@ void FirstSynth::LoadPresetByName(const char* rawName)
   GetPresetsDir(dir);
 
   WDL_String path;
-  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+  path.Set((std::filesystem::path(dir.Get()) / (std::string(safeName.Get()) + ".preset")).string().c_str());
 
   FILE* fp = fopen(path.Get(), "rb");
   if (!fp)
@@ -462,7 +471,7 @@ void FirstSynth::DeletePresetByName(const char* rawName)
   GetPresetsDir(dir);
 
   WDL_String path;
-  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+  path.Set((std::filesystem::path(dir.Get()) / (std::string(safeName.Get()) + ".preset")).string().c_str());
 
   std::error_code ec;
   std::filesystem::remove(path.Get(), ec); // ec deliberately ignored, matches this file's other filesystem calls
@@ -485,7 +494,9 @@ void FirstSynth::DeletePresetByName(const char* rawName)
 void FirstSynth::GetAutoStatePath(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
-  path.Append("\\autosave.state");
+  std::error_code ec;
+  std::filesystem::create_directories(path.Get(), ec);
+  path.Set((std::filesystem::path(path.Get()) / "autosave.state").string().c_str());
 }
 
 // called from OnWebContentLoaded() (below), same timing as the existing
@@ -976,8 +987,21 @@ void FirstSynth::OnGetLocalDownloadPathForFile(const char* fileName, WDL_String&
   localPath.AppendFormatted(MAX_WIN32_PATH_LEN, "/%s", fileName);
 }
 
+#if defined(AUv3_API) && defined(OS_MAC)
+void FirstSynth::OnParentWindowResize(int width, int height)
+{
+  EDITOR_DELEGATE_CLASS::OnParentWindowResize(width, height);
+  WDL_String script;
+  script.SetFormatted(128, "if (typeof FitAUv3ToSize === 'function') FitAUv3ToSize(%d,%d);", width, height);
+  EvaluateJavaScript(script.Get());
+}
+#endif
+
 void FirstSynth::OnWebContentLoaded()
 {
+#if defined(AUv3_API) && defined(OS_MAC)
+  EvaluateJavaScript("EnableAUv3Fit();");
+#endif
   // must call the base implementation - it sends the "params" JSON describing every
   // parameter to the UI and triggers OnUIOpen() (which syncs current values); without
   // this, overriding the method here would silently break the entire UI sync

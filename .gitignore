@@ -1,2 +1,4 @@
 private/
 build-win/
+build-mac*/
+.DS_Store

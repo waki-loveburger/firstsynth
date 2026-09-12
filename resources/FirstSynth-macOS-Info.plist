@@ -7,17 +7,17 @@
 	<key>CFBundleExecutable</key>
 	<string>FirstSynth</string>
 	<key>CFBundleGetInfoString</key>
-	<string>FirstSynth v1.0.0 Copyright 2025 Acme Inc</string>
+	<string>FirstSynth v1.0.0 Copyright 2025 EASYANDNICE</string>
 	<key>CFBundleIconFile</key>
 	<string>FirstSynth.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.AcmeInc.app.FirstSynth</string>
+	<string>com.EASYANDNICE.app.FirstSynth</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>FirstSynth</string>
 	<key>CFBundlePackageType</key>
-	<string>BNDL</string>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0.0</string>
 	<key>CFBundleSignature</key>
@@ -29,7 +29,7 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.music</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>10.13.0</string>
+	<string>11.3</string>
 	<key>NSMainNibFile</key>
 	<string>FirstSynth-macOS-MainMenu</string>
 	<key>NSMicrophoneUsageDescription</key>
