@@ -38,7 +38,7 @@
 // scrollbar reappears, it means real content changed, not that this number was
 // too tight.
 #define PLUG_WIDTH 1387
-#if defined(AUv3_API)
+#if defined(AUv3_API) || (defined(VST3_API) && defined(OS_MAC))
 #define PLUG_HEIGHT 757
 #else
 #define PLUG_HEIGHT 780

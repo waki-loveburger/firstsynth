@@ -223,8 +223,11 @@ public:
   void OnDownloadedFile(const char* path) override;
   void OnGetLocalDownloadPathForFile(const char* fileName, WDL_String& localPath) override;
   void OnWebContentLoaded() override;
-#if defined(AUv3_API) && defined(OS_MAC)
+#if (defined(AUv3_API) || defined(VST3_API)) && defined(OS_MAC)
   void OnParentWindowResize(int width, int height) override;
+#endif
+#if defined(VST3_API) && defined(OS_MAC)
+  bool ConstrainEditorResize(int& width, int& height) const override;
 #endif
 #endif
 

@@ -7,9 +7,9 @@
 	<key>CFBundleExecutable</key>
 	<string>FirstSynth</string>
 	<key>CFBundleGetInfoString</key>
-	<string>FirstSynth v1.0.0 Copyright 2025 Acme Inc</string>
+	<string>FirstSynth v1.0.0 Copyright 2025 EASYANDNICE</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.AcmeInc.vst3.FirstSynth</string>
+	<string>com.EASYANDNICE.vst3.FirstSynth</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -25,6 +25,6 @@
 	<key>CSResourcesFileMapped</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
-	<string>10.13.0</string>
+	<string>11.3</string>
 </dict>
 </plist>

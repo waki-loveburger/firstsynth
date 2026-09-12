@@ -15,6 +15,9 @@
 FirstSynth::FirstSynth(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
+#if defined(VST3_API) && defined(OS_MAC)
+  SetEditorSize(1110, 606);
+#endif
   // Subscription licence gate (eni_auth, 2026-08-24). Offline/cheap per eni_auth.h's
   // own contract, safe to call here on the message thread at instantiation - must run
   // before ProcessBlock ever gets called (a DAW host may call it before any editor
@@ -987,20 +990,30 @@ void FirstSynth::OnGetLocalDownloadPathForFile(const char* fileName, WDL_String&
   localPath.AppendFormatted(MAX_WIN32_PATH_LEN, "/%s", fileName);
 }
 
-#if defined(AUv3_API) && defined(OS_MAC)
+#if (defined(AUv3_API) || defined(VST3_API)) && defined(OS_MAC)
 void FirstSynth::OnParentWindowResize(int width, int height)
 {
   EDITOR_DELEGATE_CLASS::OnParentWindowResize(width, height);
   WDL_String script;
-  script.SetFormatted(128, "if (typeof FitAUv3ToSize === 'function') FitAUv3ToSize(%d,%d);", width, height);
+  script.SetFormatted(128, "if (typeof FitPluginToSize === 'function') FitPluginToSize(%d,%d);", width, height);
   EvaluateJavaScript(script.Get());
+}
+#endif
+
+#if defined(VST3_API) && defined(OS_MAC)
+bool FirstSynth::ConstrainEditorResize(int& width, int& height) const
+{
+  const int originalWidth = width, originalHeight = height;
+  width = std::clamp(width, 694, 2080);
+  height = static_cast<int>(std::lround(width * 757.0 / 1387.0));
+  return width == originalWidth && height == originalHeight;
 }
 #endif
 
 void FirstSynth::OnWebContentLoaded()
 {
-#if defined(AUv3_API) && defined(OS_MAC)
-  EvaluateJavaScript("EnableAUv3Fit();");
+#if (defined(AUv3_API) || defined(VST3_API)) && defined(OS_MAC)
+  EvaluateJavaScript("EnablePluginFit();");
 #endif
   // must call the base implementation - it sends the "params" JSON describing every
   // parameter to the UI and triggers OnUIOpen() (which syncs current values); without

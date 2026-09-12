@@ -28,6 +28,8 @@
 
 ## Status log
 
+- 2026-09-12: Mac VST3 を追加検証。SDK 3.8.1 を固定し、バンドル識別子を実装側の `com.EASYANDNICE.vst3.FirstSynth` に揃える。旧 AcmeInc の識別子では Web UI のリソース探索に失敗する。Mac VST3 と AUv3 は共通の `EnablePluginFit` / `FitPluginToSize` で全ページを縮小し、VST3 は `ConstrainEditorResize` で縦横比を返す。VST3 の初期サイズは 1110×606。Windows の UI 処理・VST3 クラス ID・パラメータ ID は維持する。実機確認先は Ableton Live。
+
 - 2026-09-12: 方針合意。旧スキームの参照切れを再現。CMake の認証ソースと Web リソースを整備開始。
 - 2026-09-12: Synth 依存を追加。保存パスは修正前の失敗と修正後の成功を確認。認証テストも成功。本体は手元の iPlug2 に `GetScreenScale` / `SetAttackShape` が無くコンパイル停止。後者の仕様は progress.md にあるが、変更ソースの所在をユーザーに照会中。
 - 2026-09-12: ユーザーの案内から `waki-loveburger/iPlug2` に必要な API を確認。変更版の commit を guide に記録し、作業用 clone でビルドを再開。

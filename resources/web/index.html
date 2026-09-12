@@ -1210,16 +1210,16 @@
     // remembered next launch (this project has no other WebView-side persisted prefs yet -
     // simplest option, no native settings-file work needed for this).
     const kUIScaleStorageKey = 'firstSynthUIScalePercent';
-    let fitAUv3Size = false;
+    let fitPluginSize = false;
 
-    function FitAUv3ToSize(width, height) {
-      if (fitAUv3Size && width > 0 && height > 0)
+    function FitPluginToSize(width, height) {
+      if (fitPluginSize && width > 0 && height > 0)
         document.querySelector('main').style.transform = `scale(${Math.min(width / 1387, height / 757)})`;
     }
 
-    function EnableAUv3Fit() {
-      if (fitAUv3Size) return;
-      fitAUv3Size = true;
+    function EnablePluginFit() {
+      if (fitPluginSize) return;
+      fitPluginSize = true;
       const main = document.querySelector('main');
       main.style.width = '1387px';
       main.style.zoom = 1;
@@ -1233,14 +1233,14 @@
       document.getElementById('uiScaleSelect').hidden = true;
       document.querySelector('label[for="uiScaleSelect"]').hidden = true;
       const fit = () => {
-        FitAUv3ToSize(innerWidth, innerHeight);
+        FitPluginToSize(innerWidth, innerHeight);
       };
       window.addEventListener('resize', fit);
       fit();
     }
 
     function ApplyUIScale(scalePercent, skipNativeResize) {
-      if (fitAUv3Size) return;
+      if (fitPluginSize) return;
       // `zoom` (not `transform: scale()`) - non-standard but fully supported in
       // Chromium/WebView2, and unlike transform it actually changes the element's
       // contribution to the scroll-container's scrollWidth/Height, so no
