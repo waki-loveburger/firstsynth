@@ -1,10 +1,11 @@
 # 04. macOS 配布物の署名・公証と DMG
 
 単体アプリ + AUv3 の `FirstSynth.app` と `FirstSynth.vst3` を Developer ID で署名し、
-Apple の公証を通して staple し、配布 DMG（と ZIP）を作る。手順は `scripts/dist-mac.sh` にまとめてある。
-共有ドライブに置くのは DMG。ZIP は受け取った側の展開で壊れ得るので配布には使わない（後述）。
+Apple の公証を通して staple し、配布 DMG を作る。手順は `scripts/dist-mac.sh` にまとめてある。
+配布物は DMG だけで、ZIP は作らない（後述）。
 
-MediSynth の同名スクリプトからの移植。ZIP と DMG を作る部分だけ、署名なしでテストできるよう関数に分けてある。
+MediSynth の同名スクリプトからの移植。MediSynth 版は GitHub Releases 用に ZIP も作るが、
+FirstSynth は DMG だけにした（2026-09-21、mako）。DMG を作る部分は、署名なしでテストできるよう関数に分けてある。
 
 ## 認証情報
 
@@ -17,7 +18,7 @@ MediSynth の同名スクリプトからの移植。ZIP と DMG を作る部分�
 先にビルドとローカル検証（[AUv3](02-macos-auv3-distribution.md) / [VST3](03-macos-vst3.md)）を済ませてから実行する。
 
 ```sh
-bash tests/dist_mac_package_test.sh  # ZIP / DMG の中身のテスト。署名・ネットワーク不要
+bash tests/dist_mac_package_test.sh  # DMG の中身のテスト。署名・ネットワーク不要
 scripts/dist-mac.sh app   # build-mac-auv3/out/Release/FirstSynth.app  → build-mac-auv3/dist/
 scripts/dist-mac.sh vst3  # build-mac-vst3/out/Release/FirstSynth.vst3 → build-mac-vst3/dist/
 ```
@@ -29,12 +30,12 @@ scripts/dist-mac.sh vst3  # build-mac-vst3/out/Release/FirstSynth.vst3 → build
    hardened runtime + timestamp 付きで署名し、`codesign --verify --deep --strict` で検査する
 3. 提出用の ZIP を `notarytool submit --wait` で出し、`Accepted` でなければ止まる
 4. `stapler staple` / `stapler validate`、app は `spctl --assess` も行う
-5. bundle と `THIRD-PARTY-NOTICES.txt`（VST3 SDK の MIT ライセンス）を入れた配布 ZIP を
-   `ditto --norsrc` で作り、SHA-256 を書く
-6. 同じ中身（app には `/Applications` へのリンクも）から DMG を作り、DMG 自体を署名して
-   公証・staple し、`spctl --type open` で Gatekeeper の判定を確認する。SHA-256 も書く
+5. bundle と `THIRD-PARTY-NOTICES.txt`（VST3 SDK の MIT ライセンス）、app には `/Applications` への
+   リンクも入れて DMG を作り、DMG 自体を署名して公証・staple し、`spctl --type open` で
+   Gatekeeper の判定を確認する。SHA-256 を書く
 
-成果物は `FirstSynth-<版>-macOS-arm64.{dmg,zip}` と `FirstSynth-<版>-VST3-macOS-arm64.{dmg,zip}`。
+提出用の ZIP は公証に出すためだけに作り、終わったら消す。
+成果物は `FirstSynth-<版>-macOS-arm64.dmg` と `FirstSynth-<版>-VST3-macOS-arm64.dmg`。
 版は `config.h` の `PLUG_VERSION_STR` から取る。
 配布のやり取りは共有ドライブ `ANYCREATIVE Drive/easyandnice/firstsynth/` で行い、そこには DMG を置く（2026-09-21、mako）。
 
@@ -49,11 +50,13 @@ scripts/dist-mac.sh vst3  # build-mac-vst3/out/Release/FirstSynth.vst3 → build
   （`unzip`、他の解凍ソフト、Windows 経由）で展開するとそのまま残り、署名の封印が破れる
 
 DMG には展開工程が無いので、受け取る側の操作で壊れる余地が無い。MediSynth と共通の決定（mako）。
-配布 ZIP も今は `--norsrc` で作るので壊れないが、共有には使わない。
+`--norsrc` を付ければ ZIP も壊れないが、共有に使わないものは作らない（取り違えの余地を残さない）。
+共有ドライブの `easyandnice/` は、FirstSynth・MediSynth とも DMG だけにした（9/21）。
 経緯と実測は creo の `mem_1CfGcTACNPbopUr5rq8TvW`（slug `eni-macos-dmg-distribution`）。
 
 `tests/dist_mac_package_test.sh` はこの事故の回帰テストを含む。拡張属性の付いた bundle を
-ZIP にして `unzip` で展開し、`._*` が無いことと署名が有効なことを確かめる。
+DMG に入れて取り出し、`._*` が無いことと署名が有効なことを確かめる。拡張属性を持てない
+FAT32 で DMG を作ると、このテストが赤になることを確認済み。
 `dist/` はビルドディレクトリの中にあり、ソース管理しない。
 
 ## 注意
@@ -117,3 +120,7 @@ VST3 の DMG を初めて置いた。共有ドライブ上の SHA-256:
 
 - `FirstSynth-1.0.0-macOS-arm64.dmg`: `27c3ddd0f371f3b2d675b466b5ed9d1c5305cdd9e408df712b3f58d42ec16480`
 - `FirstSynth-1.0.0-VST3-macOS-arm64.dmg`: `8fcfb9b35ba440e3693b01bdb6ddcd33395b9a0b4d79df459ec4ea29d4b66d7e`
+
+同日、ZIP の作成を外した版を VST3 で確認（出力先は作業用の場所。共有していない）。
+bundle `1bf8cf79-44cf-4769-a3a0-ef6def22111f`、DMG `3312003f-6696-4f22-8c4e-f6c49b0cc3ce` とも Accepted、
+出力は DMG と SHA-256 だけ。

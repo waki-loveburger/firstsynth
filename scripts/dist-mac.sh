@@ -6,17 +6,18 @@
 #
 # Copies the bundle into the dist directory, signs it inside-out with the
 # hardened runtime, submits a ZIP to Apple, staples the ticket and writes the
-# distribution ZIP and DMG. Re-running the auv3-local target replaces the
-# signature, so build first, then run this. Never commit the dist directory.
+# distribution DMG. Re-running the auv3-local target replaces the signature,
+# so build first, then run this. Never commit the dist directory.
 #
-# The DMG is what goes on the shared drive. A ZIP has to be extracted, and
-# anything but Finder (Drive's "download as ZIP", third-party unarchivers)
-# can scatter AppleDouble ._* files into the bundle and break the codesign
-# seal - that is how FirstSynth got refused by Gatekeeper on 2026-09-21. A
-# DMG mounts as-is, and is signed, notarized and stapled on its own.
+# Only a DMG is made, and it is what goes on the shared drive. A ZIP has to be
+# extracted, and anything but Finder (Drive's "download as ZIP", third-party
+# unarchivers) can scatter AppleDouble ._* files into the bundle and break the
+# codesign seal - that is how FirstSynth got refused by Gatekeeper on
+# 2026-09-21. A DMG mounts as-is, and is signed, notarized and stapled on its own.
 #
-# Ported from medisynth's scripts/dist-mac.sh. The packaging steps are
-# functions so tests/dist_mac_package_test.sh can run them without signing.
+# Ported from medisynth's scripts/dist-mac.sh, minus its distribution ZIP
+# (mako, 2026-09-21). The packaging steps are functions so
+# tests/dist_mac_package_test.sh can run them without signing.
 set -euo pipefail
 
 firstsynth_version() {
@@ -40,16 +41,8 @@ stage_payload() {
   cp THIRD-PARTY-NOTICES.txt "$2/"
 }
 
-# make_zip <stage> <zip>
-make_zip() {
-  rm -f "$2"
-  # --norsrc: extended attributes would become AppleDouble ._* files, which
-  # anything but Finder extracts into the bundle and breaks the seal.
-  ditto -c -k --norsrc "$1" "$2"
-}
-
-# make_dmg <app|vst3> <stage> <dmg> <volname>: same payload as the ZIP, plus a
-# drag target for the app.
+# make_dmg <app|vst3> <stage> <dmg> <volname>: the payload, plus a drag
+# target for the app.
 make_dmg() {
   if [ "$1" = app ]; then
     ln -s /Applications "$2/Applications"
@@ -89,10 +82,8 @@ main() {
     *) echo "unknown kind: $kind (app or vst3)" >&2; exit 2 ;;
   esac
   case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
-  local base zip dmg bundle stage
-  base="$(artifact_name "$kind" "$version" "$arch")"
-  zip="$dist/$base.zip"
-  dmg="$dist/$base.dmg"
+  local dmg bundle stage
+  dmg="$dist/$(artifact_name "$kind" "$version" "$arch").dmg"
   bundle="$dist/$name"
   stage="$dist/stage"
 
@@ -121,9 +112,6 @@ main() {
   fi
 
   stage_payload "$bundle" "$stage"
-  make_zip "$stage" "$zip"
-  shasum -a 256 "$zip" | tee "$zip.sha256"
-
   make_dmg "$kind" "$stage" "$dmg" "$volname"
   rm -rf "$stage"
   codesign --force --timestamp --sign "$sign_id" "$dmg"
@@ -132,7 +120,6 @@ main() {
   xcrun stapler validate "$dmg"
   spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
   shasum -a 256 "$dmg" | tee "$dmg.sha256"
-  echo "OK: $zip"
   echo "OK: $dmg  <- share this one"
 }
 

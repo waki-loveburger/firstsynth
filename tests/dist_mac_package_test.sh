@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Packaging tests for scripts/dist-mac.sh. No Developer ID or network needed:
-# a fake bundle is ad-hoc signed and only the ZIP / DMG steps run.
+# a fake bundle is ad-hoc signed and only the DMG steps run.
 #
 #   bash tests/dist_mac_package_test.sh
 #
-# The ZIP case is the regression for 2026-09-21: the distribution ZIP kept
-# extended attributes as AppleDouble ._* files, `unzip` left them inside the
-# bundle, the codesign seal broke and Gatekeeper refused the app.
+# Regression for 2026-09-21: the distribution ZIP kept extended attributes as
+# AppleDouble ._* files, `unzip` left them inside the bundle, the codesign seal
+# broke and Gatekeeper refused the app. The script now makes a DMG only, and
+# a bundle carrying extended attributes must come out of it intact.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=scripts/dist-mac.sh
@@ -68,20 +69,11 @@ check "app artifact name" \
 check "vst3 artifact name" \
   [ "$(artifact_name vst3 9.8.7 arm64)" = "FirstSynth-9.8.7-VST3-macOS-arm64" ]
 
-# 3. ZIP survives `unzip` (regression for 2026-09-21)
+# 3. App DMG, and a bundle with extended attributes survives it (regression
+# for 2026-09-21)
 fake_bundle "$work/src/FirstSynth.app" APPL
 check "fake bundle is validly signed before packaging" \
   codesign --verify --deep --strict "$work/src/FirstSynth.app"
-stage_payload "$work/src/FirstSynth.app" "$work/stage-zip"
-make_zip "$work/stage-zip" "$work/app.zip"
-mkdir -p "$work/unzipped"
-unzip -q "$work/app.zip" -d "$work/unzipped"
-check "unzip leaves no ._* inside the bundle" no_appledouble "$work/unzipped/FirstSynth.app"
-check "unzip keeps the codesign seal intact" \
-  codesign --verify --deep --strict "$work/unzipped/FirstSynth.app"
-check "ZIP carries THIRD-PARTY-NOTICES.txt" [ -f "$work/unzipped/THIRD-PARTY-NOTICES.txt" ]
-
-# 4. App DMG
 stage_payload "$work/src/FirstSynth.app" "$work/stage-app"
 make_dmg app "$work/stage-app" "$work/app.dmg" "FirstSynth test"
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$work/mnt-app" "$work/app.dmg"
@@ -90,9 +82,14 @@ check "app DMG links Applications to /Applications" links_to "$work/mnt-app/Appl
 check "app DMG carries THIRD-PARTY-NOTICES.txt" [ -f "$work/mnt-app/THIRD-PARTY-NOTICES.txt" ]
 check "bundle inside the app DMG keeps its signature" \
   codesign --verify --deep --strict "$work/mnt-app/FirstSynth.app"
+mkdir -p "$work/installed"
+cp -R "$work/mnt-app/FirstSynth.app" "$work/installed/"
 hdiutil detach -quiet "$work/mnt-app"
+check "bundle copied out of the DMG has no ._*" no_appledouble "$work/installed/FirstSynth.app"
+check "bundle copied out of the DMG keeps its signature" \
+  codesign --verify --deep --strict "$work/installed/FirstSynth.app"
 
-# 5. VST3 DMG has no Applications link
+# 4. VST3 DMG has no Applications link
 fake_bundle "$work/src/FirstSynth.vst3" BNDL
 stage_payload "$work/src/FirstSynth.vst3" "$work/stage-vst3"
 make_dmg vst3 "$work/stage-vst3" "$work/vst3.dmg" "FirstSynth VST3 test"
@@ -101,7 +98,7 @@ check "vst3 DMG contains FirstSynth.vst3" [ -d "$work/mnt-vst3/FirstSynth.vst3" 
 check "vst3 DMG has no Applications link" no_link "$work/mnt-vst3"
 hdiutil detach -quiet "$work/mnt-vst3"
 
-# 6. Unknown kind stops before touching anything
+# 5. Unknown kind stops before touching anything
 bash scripts/dist-mac.sh bogus >/dev/null 2>&1
 check "unknown kind exits with 2" [ $? -eq 2 ]
 

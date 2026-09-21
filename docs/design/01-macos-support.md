@@ -28,7 +28,7 @@
 
 ## Status log
 
-- 2026-09-21: 斎藤さんの MacBook で FirstSynth が Gatekeeper に拒否された。共有ドライブに旧ビルドが残っていたことと、手順書どおりに `ditto -c -k --keepParent` で作った配布 ZIP が Finder 以外の展開で AppleDouble `._*` を bundle 内に残し、署名の封印を破ることが原因と見ている。MediSynth の `scripts/dist-mac.sh` を移植し、配布を署名・公証・staple 済みの DMG に統一した（mako 決定、MediSynth と共通）。梱包部分は関数に分け、事故の回帰テスト `tests/dist_mac_package_test.sh` を追加。手順は `docs/guide/04-macos-distribution.md`。creo `mem_1CfGcTACNPbopUr5rq8TvW`。
+- 2026-09-21: 斎藤さんの MacBook で FirstSynth が Gatekeeper に拒否された。共有ドライブに旧ビルドが残っていたことと、手順書どおりに `ditto -c -k --keepParent` で作った配布 ZIP が Finder 以外の展開で AppleDouble `._*` を bundle 内に残し、署名の封印を破ることが原因と見ている。MediSynth の `scripts/dist-mac.sh` を移植し、配布を署名・公証・staple 済みの DMG に統一した（mako 決定、MediSynth と共通）。梱包部分は関数に分け、事故の回帰テスト `tests/dist_mac_package_test.sh` を追加。手順は `docs/guide/04-macos-distribution.md`。creo `mem_1CfGcTACNPbopUr5rq8TvW`。同日、配布 ZIP の作成もやめて DMG だけにした（mako。MediSynth は GitHub Releases 用に ZIP を残す）。
 - 2026-09-12: Mac VST3 を追加検証。SDK 3.8.1 を固定し、バンドル識別子を実装側の `com.EASYANDNICE.vst3.FirstSynth` に揃える。旧 AcmeInc の識別子では Web UI のリソース探索に失敗する。Mac VST3 と AUv3 は共通の `EnablePluginFit` / `FitPluginToSize` で全ページを縮小し、VST3 は `ConstrainEditorResize` で縦横比を返す。VST3 の初期サイズは 1110×606。Windows の UI 処理・VST3 クラス ID・パラメータ ID は維持する。実機確認先は Ableton Live。
 
 - 2026-09-12: 方針合意。旧スキームの参照切れを再現。CMake の認証ソースと Web リソースを整備開始。
