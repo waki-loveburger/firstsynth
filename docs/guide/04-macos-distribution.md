@@ -37,7 +37,7 @@ scripts/dist-mac.sh vst3  # build-mac-vst3/out/Release/FirstSynth.vst3 → build
 提出用の ZIP は公証に出すためだけに作り、終わったら消す。
 成果物は `FirstSynth-<版>-macOS-arm64.dmg` と `FirstSynth-<版>-VST3-macOS-arm64.dmg`。
 版は `config.h` の `PLUG_VERSION_STR` から取る。
-配布のやり取りは共有ドライブ `ANYCREATIVE Drive/easyandnice/firstsynth/` で行い、そこには DMG を置く（2026-09-21、mako）。
+配布のやり取りは共有ドライブ `ANYCREATIVE Drive/easyandnice/firstsynth/` で行い、そこには DMG を置く（2026-09-21、mako）。GitHub Releases は使わない（2026-09-22、mako）。
 
 ## なぜ DMG か
 
@@ -90,7 +90,7 @@ FAT32 で DMG を作ると、このテストが赤になることを確認済み
 | 成果物 | 公証 ID | 結果 |
 |---|---|---|
 | `FirstSynth.app`（Standalone + AUv3）初回 | `24f496a1-9c97-4691-a96b-152838e48fff` | Accepted（AUv3 初期サイズの不具合あり、配布しない） |
-| `FirstSynth.app` 修正版 | `29181111-9494-4dc1-bb80-2ad93e4c84ad` | Accepted、staple、Gatekeeper `Notarized Developer ID`。GitHub のプレリリースに ZIP で公開（9/21 に ZIP を取り下げ） |
+| `FirstSynth.app` 修正版 | `29181111-9494-4dc1-bb80-2ad93e4c84ad` | Accepted、staple、Gatekeeper `Notarized Developer ID`。GitHub のプレリリースに ZIP で公開（9/21 に ZIP を取り下げ、9/22 にリリース自体を削除。タグ `v1.0.0-macos.1` は残す） |
 | `FirstSynth.vst3` | `a687536e-4be7-457f-a01b-338d9c4b5977` | Accepted、staple。共有していない |
 
 2026-09-21、DMG 化（スクリプト化の前に手作業）:

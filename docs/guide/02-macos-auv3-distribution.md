@@ -1,7 +1,7 @@
 # 02. macOS AUv3
 
 FirstSynth.app に FirstSynthAUv3.appex と FirstSynthAU.framework を同梱する。
-2026-09-12 に Apple Silicon 向けの検証用プレリリース `v1.0.0-macos.1` を作った。
+2026-09-12 に Apple Silicon 向けの検証用プレリリース `v1.0.0-macos.1` を作った（GitHub のリリースは 9/22 に削除、タグのみ残る。配布は共有ドライブ）。
 2026-09-12、Logic Pro で認証キャンセル・サイズ調整・比例拡縮の動作をユーザーが確認。
 署名・公証・配布物（DMG）の作成は [04. 配布](04-macos-distribution.md) の `scripts/dist-mac.sh app` で行う。
 
