@@ -14,7 +14,9 @@ Web UI は一定の配置を transform で比例拡縮する。AUv3 では個別
 画面先行・音源先行の両方の初期化順が成功。auval も再成功。
 Logic の右下ドラッグと認証キャンセル後の操作はユーザー確認済み。
 
-UI テスト（ウィンドウを前面に表示する）:
+UI テスト（ウィンドウを前面に表示する）。表示の計測は固定の待ち時間ではなく最大 3 秒のポーリング
+（WebKit の resize 由来の再配置は、機械が忙しいと数フレーム遅れて不規則に落ちるため。MediSynth で 7 回中 4 回落ちた）。
+2026-09-22 に両順序 7 回ずつ全て通過:
 
 ```sh
 clang++ -fobjc-arc tests/auv3_view_test.mm -framework AppKit -framework AudioToolbox \

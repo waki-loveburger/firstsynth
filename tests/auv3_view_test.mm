@@ -13,6 +13,35 @@ static WKWebView* FindWebView(NSView* root)
   return nil;
 }
 
+static void Pump(double seconds)
+{
+  [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:seconds]];
+}
+
+// The refit runs off WebKit's resize event, which lands a rendering update or
+// two after the frame change, later still when the machine is busy. Evaluate
+// `js` and hand the result to `fits`, polling for up to 3 s instead of
+// measuring once at a fixed delay; log the last numbers either way.
+static BOOL PollUntil(WKWebView* web, NSString* js, NSString* what, BOOL (^fits)(id))
+{
+  id last = nil;
+  for (int i = 0; i < 60; ++i) {
+    __block BOOL done = NO, ok = NO;
+    __block id result = nil;
+    [web evaluateJavaScript:js completionHandler:^(id r, NSError* e) {
+      result = e ? [e description] : r;
+      ok = !e && fits(r);
+      done = YES;
+    }];
+    for (int j = 0; !done && j < 500; ++j) Pump(0.01);
+    last = result;
+    if (done && ok) { NSLog(@"%@: %@", what, last); return YES; }
+    Pump(0.05);
+  }
+  NSLog(@"%@: no fit after 3 s, last %@", what, last);
+  return NO;
+}
+
 // Run against the built framework: simulate hosts that load the view before
 // creating their audio unit on a worker thread (the AUv3 out-of-process order).
 int main(int argc, const char* argv[])
@@ -70,54 +99,38 @@ int main(int argc, const char* argv[])
     [window setContentSize:NSMakeSize(1387,757)];
     [vc.view setFrameSize:NSMakeSize(1387,757)];
     [vc viewDidLayout];
-    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:2]];
-    WKWebView* web = FindWebView(vc.view);
-    __block BOOL measured = NO;
-    __block BOOL fits = NO;
-    [web evaluateJavaScript:@"(()=>{const main=document.querySelector('main');const result={width:innerWidth,height:innerHeight,zoom:main.style.zoom,zoomHidden:document.getElementById('uiScaleSelect').hidden,pages:[0,1,2,3].map(i=>{SetPage(i);return {w:main.getBoundingClientRect().width,h:main.getBoundingClientRect().height};})};SetPage(0);return result;})()"
-      completionHandler:^(id result, NSError* error) {
-        fits = !error && [result[@"zoom"] doubleValue] == 1 && [result[@"zoomHidden"] boolValue];
+    WKWebView* web = nil;
+    for (int i = 0; !web && i < 60; ++i) { Pump(0.05); web = FindWebView(vc.view); }
+    if (!web) { NSLog(@"FAIL: no WKWebView in the AUv3 view"); return 1; }
+    BOOL ok = PollUntil(web,
+      @"(()=>{const main=document.querySelector('main');const result={width:innerWidth,height:innerHeight,zoom:main.style.zoom,zoomHidden:document.getElementById('uiScaleSelect').hidden,pages:[0,1,2,3].map(i=>{SetPage(i);return {w:main.getBoundingClientRect().width,h:main.getBoundingClientRect().height};})};SetPage(0);return result;})()",
+      @"Full-size UI", ^BOOL(id result) {
+        BOOL fits = [result[@"zoom"] doubleValue] == 1 && [result[@"zoomHidden"] boolValue]
+          && fabs([result[@"width"] doubleValue] - 1387) < 2;
         for (NSDictionary* page in result[@"pages"])
           fits = fits && [page[@"w"] doubleValue] <= [result[@"width"] doubleValue] + 1 && [page[@"h"] doubleValue] <= [result[@"height"] doubleValue] + 1;
-        NSLog(@"Full-size UI: %@ %@", result, error);
-        measured = YES;
-      }];
-    deadline = [NSDate dateWithTimeIntervalSinceNow:5];
-    while (!measured && deadline.timeIntervalSinceNow > 0)
-      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-    if (!measured || !fits) { NSLog(@"FAIL: full-size UI must fit every page at 100%%"); return 1; }
+        return fits;
+      });
+    if (!ok) { NSLog(@"FAIL: full-size UI must fit every page at 100%%"); return 1; }
     for (int i=0; i<6; ++i) {
       hostWidth.constant = i%2 ? 1110 : 900;
       hostHeight.constant = i%2 ? 606 : 491;
       [window setFrame:[window frameRectForContentRect:NSMakeRect(0,0,i%2 ? 1110 : 900,i%2 ? 606 : 491)] display:YES];
       [window.contentView layoutSubtreeIfNeeded];
-      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
-      measured = NO;
       double expectedWidth = i%2 ? 1110 : 900;
-      [web evaluateJavaScript:@"({viewport:innerWidth,content:document.querySelector('main').getBoundingClientRect().width})"
-        completionHandler:^(id result, NSError* error) {
-          fits = !error && fabs([result[@"viewport"] doubleValue] - expectedWidth) < 2
+      ok = PollUntil(web, @"({viewport:innerWidth,content:document.querySelector('main').getBoundingClientRect().width})",
+        [NSString stringWithFormat:@"Resize %d to %g", i, expectedWidth], ^BOOL(id result) {
+          return fabs([result[@"viewport"] doubleValue] - expectedWidth) < 2
             && fabs([result[@"content"] doubleValue] - expectedWidth) < 2;
-          measured = YES;
-        }];
-      deadline = [NSDate dateWithTimeIntervalSinceNow:5];
-      while (!measured && deadline.timeIntervalSinceNow > 0)
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-      if (!measured || !fits) { NSLog(@"FAIL: host resize to %g must resize content", expectedWidth); return 1; }
+        });
+      if (!ok) { NSLog(@"FAIL: host resize to %g must resize content", expectedWidth); return 1; }
     }
-    measured = NO;
-    fits = NO;
-    [web evaluateJavaScript:@"({viewport:innerWidth,width:document.querySelector('main').getBoundingClientRect().width,zoom:new DOMMatrix(getComputedStyle(document.querySelector('main')).transform).a})"
-      completionHandler:^(id result, NSError* error) {
-        fits = !error && fabs([result[@"viewport"] doubleValue] - [result[@"width"] doubleValue]) < 2
+    ok = PollUntil(web, @"({viewport:innerWidth,width:document.querySelector('main').getBoundingClientRect().width,zoom:new DOMMatrix(getComputedStyle(document.querySelector('main')).transform).a})",
+      @"Scaled UI", ^BOOL(id result) {
+        return fabs([result[@"viewport"] doubleValue] - [result[@"width"] doubleValue]) < 2
           && [result[@"zoom"] doubleValue] > 0.79 && [result[@"zoom"] doubleValue] < 0.81;
-        NSLog(@"Scaled UI: %@ %@", result, error);
-        measured = YES;
-      }];
-    deadline = [NSDate dateWithTimeIntervalSinceNow:5];
-    while (!measured && deadline.timeIntervalSinceNow > 0)
-      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-    if (!fits) { NSLog(@"FAIL: content must scale with host window"); return 1; }
+      });
+    if (!ok) { NSLog(@"FAIL: content must scale with host window"); return 1; }
     [window orderOut:nil];
     NSLog(@"PASS: async initial size and repeated host layout");
     return 0;

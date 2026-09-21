@@ -28,6 +28,7 @@
 
 ## Status log
 
+- 2026-09-22: `scripts/dist-mac.sh` を MediSynth の現行に揃えた（引数のガード、出荷 bundle への verify、公証拒否時の理由保存、README 同梱、`.partial` DMG）。`scripts/verify-auv3.py` / `verify-vst3.py` を移植（FirstSynth の appex は `files.user-selected` を持たないので要求しない）。AUv3 表示テストの計測をポーリングにし、両順序 7/7。
 - 2026-09-22: MediSynth lane の指摘で、macOS の plist に書かれた版（文字列・AUv3 の整数版・最低 OS）が `config.h` から取り残される穴を塞いだ。configure で検査して止める。`IPLUG_DEPLOY_PLUGINS` は CMakeLists で OFF に固定（iPlug2 の既定 ON は `~/Applications` の app を build tree への symlink に置き換える）。検証中に Xcode 27 の SDK が deployment target 11.3 を拒否することが分かり、最低対応 macOS を 12.0 に上げた（mako 決定、MediSynth と共通）。
 - 2026-09-21: 斎藤さんの MacBook で FirstSynth が Gatekeeper に拒否された。共有ドライブに旧ビルドが残っていたことと、手順書どおりに `ditto -c -k --keepParent` で作った配布 ZIP が Finder 以外の展開で AppleDouble `._*` を bundle 内に残し、署名の封印を破ることが原因と見ている。MediSynth の `scripts/dist-mac.sh` を移植し、配布を署名・公証・staple 済みの DMG に統一した（mako 決定、MediSynth と共通）。梱包部分は関数に分け、事故の回帰テスト `tests/dist_mac_package_test.sh` を追加。手順は `docs/guide/04-macos-distribution.md`。creo `mem_1CfGcTACNPbopUr5rq8TvW`。同日、配布 ZIP の作成もやめて DMG だけにした（mako。MediSynth は GitHub Releases 用に ZIP を残す）。
 - 2026-09-12: Mac VST3 を追加検証。SDK 3.8.1 を固定し、バンドル識別子を実装側の `com.EASYANDNICE.vst3.FirstSynth` に揃える。旧 AcmeInc の識別子では Web UI のリソース探索に失敗する。Mac VST3 と AUv3 は共通の `EnablePluginFit` / `FitPluginToSize` で全ページを縮小し、VST3 は `ConstrainEditorResize` で縦横比を返す。VST3 の初期サイズは 1110×606。Windows の UI 処理・VST3 クラス ID・パラメータ ID は維持する。実機確認先は Ableton Live。

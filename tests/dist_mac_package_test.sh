@@ -74,12 +74,14 @@ check "vst3 artifact name" \
 fake_bundle "$work/src/FirstSynth.app" APPL
 check "fake bundle is validly signed before packaging" \
   codesign --verify --deep --strict "$work/src/FirstSynth.app"
-stage_payload "$work/src/FirstSynth.app" "$work/stage-app"
+stage_payload app "$work/src/FirstSynth.app" "$work/stage-app" 9.8.7 arm64
 make_dmg app "$work/stage-app" "$work/app.dmg" "FirstSynth test"
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$work/mnt-app" "$work/app.dmg"
 check "app DMG contains FirstSynth.app" [ -d "$work/mnt-app/FirstSynth.app" ]
 check "app DMG links Applications to /Applications" links_to "$work/mnt-app/Applications" /Applications
 check "app DMG carries THIRD-PARTY-NOTICES.txt" [ -f "$work/mnt-app/THIRD-PARTY-NOTICES.txt" ]
+check "app DMG README names the version and the Applications folder" \
+  grep -q "FirstSynth 9.8.7 (macOS, arm64)" "$work/mnt-app/README.txt"
 check "bundle inside the app DMG keeps its signature" \
   codesign --verify --deep --strict "$work/mnt-app/FirstSynth.app"
 mkdir -p "$work/installed"
@@ -91,16 +93,24 @@ check "bundle copied out of the DMG keeps its signature" \
 
 # 4. VST3 DMG has no Applications link
 fake_bundle "$work/src/FirstSynth.vst3" BNDL
-stage_payload "$work/src/FirstSynth.vst3" "$work/stage-vst3"
+stage_payload vst3 "$work/src/FirstSynth.vst3" "$work/stage-vst3" 9.8.7 arm64
 make_dmg vst3 "$work/stage-vst3" "$work/vst3.dmg" "FirstSynth VST3 test"
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$work/mnt-vst3" "$work/vst3.dmg"
 check "vst3 DMG contains FirstSynth.vst3" [ -d "$work/mnt-vst3/FirstSynth.vst3" ]
 check "vst3 DMG has no Applications link" no_link "$work/mnt-vst3"
+check "vst3 DMG README points at the VST3 folder" \
+  grep -q "Library/Audio/Plug-Ins/VST3" "$work/mnt-vst3/README.txt"
 hdiutil detach -quiet "$work/mnt-vst3"
 
-# 5. Unknown kind stops before touching anything
+# 5. Guards stop before anything is signed, submitted or deleted
 bash scripts/dist-mac.sh bogus >/dev/null 2>&1
 check "unknown kind exits with 2" [ $? -eq 2 ]
+bash scripts/dist-mac.sh app "$work/nope.app" >/dev/null 2>&1
+check "missing bundle exits with 2" [ $? -eq 2 ]
+bash scripts/dist-mac.sh app "$work/src/FirstSynth.app" "$work/src" >/dev/null 2>&1
+check "dist containing src exits with 2" [ $? -eq 2 ]
+check "the guard left the source bundle alone" \
+  codesign --verify --deep --strict "$work/src/FirstSynth.app"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures failed"

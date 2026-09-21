@@ -25,18 +25,26 @@ scripts/dist-mac.sh vst3  # build-mac-vst3/out/Release/FirstSynth.vst3 → build
 
 スクリプトは次を順に行う。
 
-1. `dist/` を作り直し、bundle をコピーする。`out/` の bundle には触れない
-2. app は Framework → appex（sandbox entitlement 付き）→ app の順、VST3 は bundle を
+1. 引数を絶対パスにし、`src` が bundle でない・`dist` が `src` を含む、なら何もせず止まる
+   （`dist/` は作り直すので、間違えると build 出力を消しかねない）
+2. `dist/` を作り直し、bundle をコピーする。`out/` の bundle には触れない
+3. app は Framework → appex（sandbox entitlement 付き）→ app の順、VST3 は bundle を
    hardened runtime + timestamp 付きで署名し、`codesign --verify --deep --strict` で検査する
-3. 提出用の ZIP を `notarytool submit --wait` で出し、`Accepted` でなければ止まる
-4. `stapler staple` / `stapler validate`、app は `spctl --assess` も行う
-5. bundle と `THIRD-PARTY-NOTICES.txt`（VST3 SDK の MIT ライセンス）、app には `/Applications` への
-   リンクも入れて DMG を作り、DMG 自体を署名して公証・staple し、`spctl --type open` で
-   Gatekeeper の判定を確認する。SHA-256 を書く
+4. `scripts/verify-auv3.py` / `verify-vst3.py` で、出荷する bundle の識別子・`config.h` との版の一致
+   （AUv3 は整数版も）・plist の最低 OS とバイナリの `minos` の一致・entitlements・web リソース・rpath を検査する
+5. 提出用の ZIP を `notarytool submit --wait` で出し、`Accepted` でなければ止まる。
+   弾かれたときは Apple の理由を `dist/notarize-issues.json` に残す
+6. `stapler staple` / `stapler validate`、app は `spctl --assess` も行う
+7. bundle と `THIRD-PARTY-NOTICES.txt`（VST3 SDK の MIT ライセンス）、置き場所を書いた `README.txt`、
+   app には `/Applications` へのリンクも入れて DMG を作り、DMG 自体を署名して公証・staple し、
+   `spctl --type open` で Gatekeeper の判定を確認する。SHA-256 を書く。
+   DMG は `.partial.dmg` の名前で作り、ここまで通ってから本来の名前にする。途中で失敗した DMG と
+   提出用 ZIP は消える
 
 提出用の ZIP は公証に出すためだけに作り、終わったら消す。
 成果物は `FirstSynth-<版>-macOS-arm64.dmg` と `FirstSynth-<版>-VST3-macOS-arm64.dmg`。
-版は `config.h` の `PLUG_VERSION_STR` から取る。
+版は `config.h` の `PLUG_VERSION_STR`、arch はバイナリの `lipo -archs` から取る。
+verify は build 出力に対しても単独で使える（`python3 scripts/verify-auv3.py build-mac-auv3/out/Release/FirstSynth.app`）。
 配布のやり取りは共有ドライブ `ANYCREATIVE Drive/easyandnice/firstsynth/` で行い、そこには DMG を置く（2026-09-21、mako）。GitHub Releases は使わない（2026-09-22、mako）。
 
 ## なぜ DMG か
