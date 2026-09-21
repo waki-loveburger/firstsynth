@@ -56,10 +56,9 @@ SDK 3.8 以降は MIT ライセンスで、SDK の利用にライセンスキー
 旧契約の扱いや VST 商標・ロゴの利用条件は別途その条件に従う。
 公式情報: https://www.steinberg.net/ja/press/2025/vst-3-8/
 
-確認用 ZIP は `build-mac-vst3/FirstSynth-VST3-macOS-arm64.zip`。
-`dist/FirstSynth.vst3` を Developer ID 署名し、ZIP を `easyandnice-notary` で公証、
-VST3 バンドルに staple してから SDK ライセンス文と本ガイドを添えて ZIP を作る。
-変更後は署名・公証・ZIP 作成をすべてやり直す。
+署名・公証・配布物の作成は [04. 配布](04-macos-distribution.md) の `scripts/dist-mac.sh vst3` で行う。
+`THIRD-PARTY-NOTICES.txt`（SDK の MIT ライセンス）を添えた DMG ができる。共有ドライブに置くのは DMG。
+VST3 を変更したら、署名から DMG の作成までをすべてやり直す。
 
 ## 検証記録
 

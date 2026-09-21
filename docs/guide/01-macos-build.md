@@ -38,9 +38,12 @@ IPLUG2_DIR="$PWD/private/iPlug2" ruby tests/storage_paths_test.rb
 node tests/empty_preset_list_test.js
 c++ -std=c++17 -I . tests/factory_presets_test.cpp -o /tmp/firstsynth-factory-test
 ruby -rtmpdir -e 'Dir.mktmpdir("firstsynth-seed-") { |dir| abort "failed" unless system("/tmp/firstsynth-factory-test", dir) }'
+bash tests/dist_mac_package_test.sh
 ```
 
 保存パステストは本体のパス生成部分を実際にコンパイルし、iPlug2 の `INIPath` の返り値だけを一時フォルダへ差し替える。シリアライズや UI 経由の保存全体のテストではない。
+
+配布の梱包テストは、アドホック署名した仮の bundle で `scripts/dist-mac.sh` の ZIP / DMG 作成を動かす。Developer ID もネットワークも要らない。2026-09-21 の事故（ZIP の展開で署名の封印が破れた）の回帰テストを含む。署名と公証そのものは確かめないので、実際の配布物は [04](04-macos-distribution.md) の手順で作る。
 
 ## 残る検証
 

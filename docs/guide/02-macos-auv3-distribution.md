@@ -1,10 +1,9 @@
-# macOS AUv3 のビルドと公証
+# 02. macOS AUv3
 
 FirstSynth.app に FirstSynthAUv3.appex と FirstSynthAU.framework を同梱する。
-Apple Silicon 向けの検証用プレリリース `v1.0.0-macos.1`。
+2026-09-12 に Apple Silicon 向けの検証用プレリリース `v1.0.0-macos.1` を作った。
 2026-09-12、Logic Pro で認証キャンセル・サイズ調整・比例拡縮の動作をユーザーが確認。
-初回の公証済み `build-mac-auv3/dist/` は不具合を含む旧ビルドのため配布しない。
-修正版の配布成果物は `build-mac-auv3/dist-macos.1/` に保存する。
+署名・公証・配布物（DMG）の作成は [04. 配布](04-macos-distribution.md) の `scripts/dist-mac.sh app` で行う。
 
 音源が画面より後に初期化されると preferredContentSize が0のままになる問題は
 `tests/auv3_view_test.mm` で再現し、専用 view controller でメインスレッドにサイズを通知して修正。
@@ -49,48 +48,18 @@ cmake --build build-mac-auv3 --config Release \
 成果物は `build-mac-auv3/out/Release/FirstSynth.app`。
 配布・AUv3 検証には Release を使う。現状の Debug は Web UI をソースツリーから読む。
 `FirstSynth-auv3-local` は毎回拡張を再同梱し、内側から ad-hoc 署名して構造を検証する。
-このターゲットを再実行すると Developer ID 署名も置き換わるので、公証後は再ビルドしない。
+`scripts/dist-mac.sh` は `dist/` にコピーしてから Developer ID で署名するので、ここでの ad-hoc 署名は配布物に影響しない。
+`out/` を作り直したら配布物も作り直す。
 
 AUv3 の識別子は `com.EASYANDNICE.app.FirstSynth.AUv3`、コンポーネントは
 `aumu hnve EZAN`。ホストでは `EASYANDNICE: FirstSynth` として表示される。
 37 個の factory preset と Web UI は拡張が使う framework にも同梱する。
 
-## 認証
+## 署名・公証・配布
 
-署名: `Developer ID Application: Anycreative Inc. (3EQKG4B352)`。
-公証: Keychain profile `easyandnice-notary`。MediSynth と共用する。
-パスワード・秘密鍵はリポジトリに保存しない。
-
-## 署名と公証
-
-ローカル AU 検証後、配布用コピーを作って以下を実行する。
-`dist` 配下はビルド用ディレクトリの中に置き、ソース管理しない。
-
-```sh
-mkdir -p build-mac-auv3/dist-macos.1
-ditto build-mac-auv3/out/Release/FirstSynth.app build-mac-auv3/dist-macos.1/FirstSynth.app
-FIRSTSYNTH_APP="$PWD/build-mac-auv3/dist-macos.1/FirstSynth.app"
-FIRSTSYNTH_SIGN_ID='Developer ID Application: Anycreative Inc. (3EQKG4B352)'
-codesign --force --timestamp --options runtime --sign "$FIRSTSYNTH_SIGN_ID" \
-  "$FIRSTSYNTH_APP/Contents/Frameworks/FirstSynthAU.framework"
-codesign --force --timestamp --options runtime --sign "$FIRSTSYNTH_SIGN_ID" \
-  --entitlements resources/FirstSynth-AUv3.entitlements \
-  "$FIRSTSYNTH_APP/Contents/PlugIns/FirstSynthAUv3.appex"
-codesign --force --timestamp --options runtime --sign "$FIRSTSYNTH_SIGN_ID" "$FIRSTSYNTH_APP"
-codesign --verify --deep --strict "$FIRSTSYNTH_APP"
-ditto -c -k --keepParent "$FIRSTSYNTH_APP" build-mac-auv3/dist-macos.1/FirstSynth-submit.zip
-xcrun notarytool submit build-mac-auv3/dist-macos.1/FirstSynth-submit.zip \
-  --keychain-profile easyandnice-notary --wait
-```
-
-`Accepted` を確認してから ticket を添付し、配布 ZIP を作り直す。
-
-```sh
-xcrun stapler staple "$FIRSTSYNTH_APP"
-xcrun stapler validate "$FIRSTSYNTH_APP"
-spctl --assess --type execute --verbose=2 "$FIRSTSYNTH_APP"
-ditto -c -k --keepParent "$FIRSTSYNTH_APP" build-mac-auv3/dist-macos.1/FirstSynth-macOS-arm64.zip
-```
+[04. 配布](04-macos-distribution.md) の `scripts/dist-mac.sh app` で行う。共有ドライブに置くのは DMG。
+以前ここにあった手順は配布 ZIP を `ditto -c -k --keepParent` で作っており、
+Finder 以外で展開すると署名が壊れた（2026-09-21 に Gatekeeper で拒否された原因の一つ）。手で ZIP を作って配布しない。
 
 ## 実機で確認すること
 
@@ -99,4 +68,4 @@ ditto -c -k --keepParent "$FIRSTSYNTH_APP" build-mac-auv3/dist-macos.1/FirstSynt
 - AUv3 の Web UI、ログイン、MIDI 発音、プリセット切替、プロジェクト保存・復元。
 - AUv3 は sandbox 内で動くため、単体版のログイン・ユーザープリセットの共有は未保証。
   自動共有が必要な場合は App Group の設計が必要。
-- ダウンロードした成果物を別 Mac で起動・読み込みできる。
+- 共有ドライブから落とした DMG で、別 Mac でも起動・読み込みできる。
