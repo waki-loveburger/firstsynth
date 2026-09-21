@@ -1,6 +1,6 @@
 # 03. macOS VST3
 
-Apple Silicon / macOS 11.3 以降を対象とする。Logic は AUv3 を使用し、VST3 は Ableton Live などの VST3 ホストで使用する。
+Apple Silicon / macOS 12.0 以降を対象とする（2026-09-22 に 11.3 から変更、理由は `01-macos-build.md`）。Logic は AUv3 を使用し、VST3 は Ableton Live などの VST3 ホストで使用する。
 
 ## ビルド
 
@@ -15,7 +15,7 @@ cp -R private/vst3sdk/base private/vst3sdk/pluginterfaces private/vst3sdk/public
   private/iPlug2/Dependencies/IPlug/VST3_SDK/
 cmake -S . -B build-mac-vst3 -G Xcode \
   -DIPLUG2_DIR="$PWD/private/iPlug2" -DFIRSTSYNTH_FORMATS=VST3 \
-  -DIPLUG_DEPLOY_PLUGINS=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
+  -DIPLUG_DEPLOY_PLUGINS=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
 cmake --build build-mac-vst3 --config Release --target FirstSynth-vst3 --parallel 4
 ```
 

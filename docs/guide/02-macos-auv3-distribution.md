@@ -40,7 +40,7 @@ cmake -S . -B build-mac-auv3 -G Xcode \
   -DIPLUG2_DIR="$PWD/private/iPlug2" \
   '-DFIRSTSYNTH_FORMATS=APP;AUV3' \
   -DIPLUG_DEPLOY_PLUGINS=OFF \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
 cmake --build build-mac-auv3 --config Release \
   --target FirstSynth-auv3-local --parallel 4
 ```

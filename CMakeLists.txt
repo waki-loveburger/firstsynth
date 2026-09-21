@@ -1,13 +1,37 @@
 cmake_minimum_required(VERSION 3.14)
-project(FirstSynth VERSION 1.0.0)
 
-if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.3" CACHE STRING "Minimum macOS version" FORCE)
+# config.h holds the version everything else follows. Windows keeps its own copy
+# in the installer / resources; on macOS the value is written out in the Info.plists.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/config.h" _firstsynth_config_h)
+string(REGEX MATCH "#define PLUG_VERSION_STR \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" _firstsynth_match "${_firstsynth_config_h}")
+if(NOT _firstsynth_match)
+  message(FATAL_ERROR "Could not read PLUG_VERSION_STR from config.h")
 endif()
+set(FIRSTSYNTH_VERSION "${CMAKE_MATCH_1}")
+string(REGEX MATCH "#define PLUG_VERSION_HEX (0x[0-9A-Fa-f]+)" _firstsynth_match "${_firstsynth_config_h}")
+if(NOT _firstsynth_match)
+  message(FATAL_ERROR "Could not read PLUG_VERSION_HEX from config.h")
+endif()
+math(EXPR FIRSTSYNTH_VERSION_INT "${CMAKE_MATCH_1}") # AudioComponents.version is this as decimal
+
+# Must precede project(): CMake bakes the deployment target into the compiler
+# checks it runs there.
+set(FIRSTSYNTH_MACOS_MIN "12.0")
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "${FIRSTSYNTH_MACOS_MIN}" CACHE STRING "Minimum macOS version")
+endif()
+
+project(FirstSynth VERSION ${FIRSTSYNTH_VERSION})
 
 if(NOT DEFINED IPLUG2_DIR)
   set(IPLUG2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../iPlug2" CACHE PATH "iPlug2 root directory")
 endif()
+
+# iPlug2 defaults this to ON, and on macOS its APP deploy step does
+# `rm -rf ~/Applications/FirstSynth.app` followed by a symlink to the build tree.
+# That is where a notarized app may live (docs/guide/04-macos-distribution.md),
+# so never deploy unless asked for on the command line.
+set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "Deploy built plugins to system directories")
 
 include("${IPLUG2_DIR}/iPlug2.cmake")
 find_package(iPlug2 REQUIRED)
@@ -24,6 +48,44 @@ set(ENI_SOURCES
 if(APPLE)
   list(APPEND ENI_SOURCES eni_auth/eni_http_mac.mm)
   set(ENI_LIBRARIES "-framework Foundation")
+
+  # The macOS bundles carry their version (and minimum OS) as literals in the
+  # Info.plists, and those files are only visible from a Mac checkout - a bump
+  # made on Windows leaves them behind. Fail configure instead of shipping a
+  # bundle that tells the host it is still the previous release (MediSynth
+  # shipped 1.0.5 announcing itself as 1.0.3 this way).
+  #
+  # Note CMake keeps CMAKE_MATCH_<n> from the previous successful match when a
+  # regex does not match, so the match result variable is checked first.
+  function(firstsynth_expect_plist plist key tag expected source)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/resources/${plist}" _text)
+    string(REGEX MATCH "<key>${key}</key>[ \t\r\n]*<${tag}>([^<]*)</${tag}>" _m "${_text}")
+    if(NOT _m)
+      message(FATAL_ERROR "resources/${plist}: no <${tag}> value for ${key}")
+    endif()
+    if(NOT CMAKE_MATCH_1 STREQUAL expected)
+      message(FATAL_ERROR
+        "resources/${plist}: ${key} is ${CMAKE_MATCH_1}, ${source} says ${expected}.\n"
+        "Bring the macOS plists up to date, e.g. "
+        "sd -s '${CMAKE_MATCH_1}' '${expected}' resources/${plist}")
+    endif()
+  endfunction()
+  foreach(_plist IN ITEMS
+      "FirstSynth-macOS-Info.plist"
+      "FirstSynth-macOS-AUv3-Info.plist"
+      "FirstSynth-macOS-AUv3Framework-Info.plist"
+      "FirstSynth-VST3-Info.plist")
+    firstsynth_expect_plist("${_plist}" CFBundleShortVersionString string "${FIRSTSYNTH_VERSION}" config.h)
+    firstsynth_expect_plist("${_plist}" CFBundleVersion string "${FIRSTSYNTH_VERSION}" config.h)
+  endforeach()
+  # Compare with the target actually in effect (a -DCMAKE_OSX_DEPLOYMENT_TARGET
+  # on the command line wins), so the plists can never promise an older macOS
+  # than the binaries support.
+  foreach(_plist IN ITEMS "FirstSynth-macOS-Info.plist" "FirstSynth-macOS-AUv3-Info.plist" "FirstSynth-VST3-Info.plist")
+    firstsynth_expect_plist("${_plist}" LSMinimumSystemVersion string "${CMAKE_OSX_DEPLOYMENT_TARGET}" CMAKE_OSX_DEPLOYMENT_TARGET)
+  endforeach()
+  # The integer the AU host actually registers (AudioComponents[0].version).
+  firstsynth_expect_plist("FirstSynth-macOS-AUv3-Info.plist" version integer "${FIRSTSYNTH_VERSION_INT}" "config.h PLUG_VERSION_HEX")
   # CoreAudio names must be UTF-8 for SWELL and settings.ini, including Japanese.
   set_property(SOURCE "${IPLUG2_DIR}/Dependencies/IPlug/RTAudio/RtAudio.cpp"
     APPEND PROPERTY COMPILE_DEFINITIONS UNICODE)

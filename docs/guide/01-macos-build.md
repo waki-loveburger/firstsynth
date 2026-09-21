@@ -20,13 +20,23 @@ cmake -S . -B build-mac-waki -G Xcode \
   -DIPLUG2_DIR="$PWD/private/iPlug2" \
   -DFIRSTSYNTH_FORMATS=APP \
   -DIPLUG_DEPLOY_PLUGINS=OFF \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
 cmake --build build-mac-waki --config Debug --target FirstSynth-app --parallel 4
 ```
 
 生成プロジェクト: `build-mac-waki/FirstSynth.xcodeproj`。
 出力先: `build-mac-waki/out/Debug/FirstSynth.app`。
-ローカルビルドの署名は無効。11.3 は配置対象の設定値で、旧 OS での動作確認済みを意味しない。
+ローカルビルドの署名は無効。12.0 は配置対象の設定値で、旧 OS での動作確認済みを意味しない。
+`-DCMAKE_OSX_DEPLOYMENT_TARGET` と `-DIPLUG_DEPLOY_PLUGINS=OFF` は CMakeLists の既定値と同じなので省略できる。
+
+最低対応 macOS は 12.0（2026-09-22 に 11.3 から変更）。Xcode 27 の SDK は deployment target 12.0 未満を受け付けず、
+11.3 のままでは新規の build ディレクトリでコンパイラ検出の段階で configure が止まる（既存の build ディレクトリは
+コンパイラがキャッシュ済みなので気づかない）。9/12 の配布物は SDK 26.5 で作った 11.3 ビルドで、そのまま配布している。
+
+configure は `config.h` の `PLUG_VERSION_STR` / `PLUG_VERSION_HEX` を真値として、macOS の Info.plist 4 本の版、
+3 本の `LSMinimumSystemVersion`（実効の deployment target と比較）、AUv3 の `AudioComponents[0].version`（整数版）を検査し、
+ずれていれば直し方を表示して止まる。Windows 側で版を上げたときに plist が取り残される事故（MediSynth 1.0.5 が
+Logic に 1.0.3 と名乗った）を防ぐため。
 
 ## 回帰テスト
 
