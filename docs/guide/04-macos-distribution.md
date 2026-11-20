@@ -45,7 +45,9 @@ scripts/dist-mac.sh vst3  # build-mac-vst3/out/Release/FirstSynth.vst3 → build
 成果物は `FirstSynth-<版>-macOS-arm64.dmg` と `FirstSynth-<版>-VST3-macOS-arm64.dmg`。
 版は `config.h` の `PLUG_VERSION_STR`、arch はバイナリの `lipo -archs` から取る。
 verify は build 出力に対しても単独で使える（`python3 scripts/verify-auv3.py build-mac-auv3/out/Release/FirstSynth.app`）。
-配布のやり取りは共有ドライブ `ANYCREATIVE Drive/easyandnice/firstsynth/` で行い、そこには DMG を置く（2026-09-21、mako）。GitHub Releases は使わない（2026-09-22、mako）。
+開発中のやり取りは共有ドライブ `ANYCREATIVE Drive/easyandnice/firstsynth/` で行い、そこには DMG を置く（2026-09-21、mako）。
+一般向けの公開は R2 の公開リンク `dl.easyandnicewaki.com`（2026-11-20、mako。MediSynth と同じ型）。手順は [05](05-release-staging.md)。
+GitHub Releases は使わない（2026-09-22、mako）。
 
 ## なぜ DMG か
 
