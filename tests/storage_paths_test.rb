@@ -7,7 +7,8 @@ require 'open3'
 root = File.expand_path('..', __dir__)
 iplug = ENV.fetch('IPLUG2_DIR', File.expand_path('../iPlug2', root))
 source = File.read(File.join(root, 'FirstSynth.cpp'))
-methods = %w[GetPresetsDir GetAutoStatePath].map do |name|
+method_names = %w[GetPresetsDir GetAutoStatePath GetFactoryMarksPath GetAutoStatePresetNamePath]
+methods = method_names.map do |name|
   source.match(/void FirstSynth::#{name}\(WDL_String& path\)\n\{.*?\n\}/m)&.to_s or abort "Missing #{name}"
 end
 file_paths = %w[SavePresetAs LoadPresetByName DeletePresetByName].map do |name|
@@ -28,16 +29,17 @@ Dir.mktmpdir('firstsynth-paths-') do |tmp|
     static const char* fixture;
     void INIPath(WDL_String& path, const char*) { path.Set(fixture); }
     class FirstSynth { public:
-      void GetPresetsDir(WDL_String&);
-      void GetAutoStatePath(WDL_String&);
+    #{method_names.map { |name| "  void #{name}(WDL_String&);" }.join("\n")}
     };
     #{methods.join("\n")}
     int main(int argc, char** argv) {
       fixture = argv[1];
       FirstSynth synth;
-      WDL_String dir, autosave, path, safeName("日本語 Pad");
+      WDL_String dir, autosave, marks, autosaveName, path, safeName("日本語 Pad");
       synth.GetAutoStatePath(autosave);
       synth.GetPresetsDir(dir);
+      synth.GetFactoryMarksPath(marks);
+      synth.GetAutoStatePresetNamePath(autosaveName);
       namespace fs = std::filesystem;
       bool ok = true;
       auto check = [&](bool passed, const char* message) {
@@ -46,6 +48,8 @@ Dir.mktmpdir('firstsynth-paths-') do |tmp|
       check(fs::path(dir.Get()) == fs::path(fixture) / "Presets", "preset directory must be inside the app data directory");
       check(fs::is_directory(fs::path(fixture) / "Presets"), "preset directory must exist");
       check(fs::path(autosave.Get()) == fs::path(fixture) / "autosave.state", "autosave must be inside the app data directory");
+      check(fs::path(marks.Get()) == fs::path(fixture) / "Presets" / "_factory.txt", "factory marks must be inside the preset directory");
+      check(fs::path(autosaveName.Get()) == fs::path(fixture) / "autosave_presetname.txt", "autosave preset name must be inside the app data directory");
       #{file_paths.join("\n")}
       return ok ? 0 : 1;
     }

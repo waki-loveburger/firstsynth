@@ -11,6 +11,17 @@ WEB_RESOURCES = ("index.html", "script.js", "knob-control.js", "button-control.j
                  "eq-curve-display.js", "waveform-display.js", "dragon-bg.svg")
 
 
+def check_factory_presets(base, where):
+    # The shipped sounds and their "star" marks must travel together: the UI reads
+    # the marks from _factory.txt, so a bundle without it seeds unmarked presets.
+    presets = base / "presets"
+    marks = presets / "_factory.txt"
+    check(marks.is_file(), f"Missing factory marks: {where}/presets/_factory.txt")
+    names = [line.strip() for line in marks.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    check(bool(names), f"{where}/presets/_factory.txt lists no presets")
+    missing = [n for n in names if not (presets / f"{n}.preset").is_file()]
+    check(not missing, f"{where}: marked as factory but not bundled: {missing}")
+
 def plist(path):
     return plistlib.loads(path.read_bytes().removeprefix(b"\xef\xbb\xbf"))
 
@@ -76,9 +87,10 @@ def verify(app, expected_version, expected_version_int):
         "WKWebView's Networking process requires network.client, even for bundled HTML"
     ))
     check((framework / fw_info["CFBundleExecutable"]).is_file(), "Framework executable missing")
-    for base in (contents / "Resources", framework / "Resources"):
+    for base, where in ((contents / "Resources", "app"), (framework / "Resources", "framework")):
         for name in WEB_RESOURCES:
             check((base / "web" / name).is_file(), f"Missing web resource: {base}/{name}")
+        check_factory_presets(base, where)
     deps = subprocess.check_output(["otool", "-L", str(executable)], text=True)
     dependency = "@rpath/FirstSynthAU.framework/Versions/A/FirstSynthAU"
     check(dependency in deps, "Framework must use @rpath")

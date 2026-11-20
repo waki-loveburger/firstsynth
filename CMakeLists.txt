@@ -94,6 +94,9 @@ elseif(WIN32)
 endif()
 
 file(GLOB FACTORY_PRESETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/presets/*.preset")
+# The "star" marks sidecar ships with the presets: without it the seeded sounds
+# are in the user's folder but none of them is marked as a factory preset.
+list(APPEND FACTORY_PRESETS "${CMAKE_CURRENT_SOURCE_DIR}/presets/_factory.txt")
 
 iplug_add_plugin(${PROJECT_NAME}
   FORMATS ${FIRSTSYNTH_FORMATS}

@@ -11,6 +11,17 @@ WEB_RESOURCES = ("index.html", "script.js", "knob-control.js", "button-control.j
                  "eq-curve-display.js", "waveform-display.js", "dragon-bg.svg")
 
 
+def check_factory_presets(base, where):
+    # The shipped sounds and their "star" marks must travel together: the UI reads
+    # the marks from _factory.txt, so a bundle without it seeds unmarked presets.
+    presets = base / "presets"
+    marks = presets / "_factory.txt"
+    check(marks.is_file(), f"Missing factory marks: {where}/presets/_factory.txt")
+    names = [line.strip() for line in marks.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    check(bool(names), f"{where}/presets/_factory.txt lists no presets")
+    missing = [n for n in names if not (presets / f"{n}.preset").is_file()]
+    check(not missing, f"{where}: marked as factory but not bundled: {missing}")
+
 def plist(path):
     return plistlib.loads(path.read_bytes().removeprefix(b"\xef\xbb\xbf"))
 
@@ -43,6 +54,7 @@ def verify(bundle, expected_version):
     check("arm64" in archs, f"Expected an arm64 slice, got {archs}")
     for name in WEB_RESOURCES:
         check((contents / "Resources" / "web" / name).is_file(), f"Missing web resource: {name}")
+    check_factory_presets(contents / "Resources", "vst3")
     check((contents / "PkgInfo").is_file(), "PkgInfo missing")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
     print(f"VST3 bundle {expected_version}: identity, arm64 slice, resources and signature verified")

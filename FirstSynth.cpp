@@ -711,7 +711,7 @@ static void WriteFactoryMarks(const WDL_String& path, const std::vector<std::str
 void FirstSynth::GetFactoryMarksPath(WDL_String& path)
 {
   GetPresetsDir(path);
-  path.Append("\\_factory.txt");
+  path.Set((std::filesystem::path(path.Get()) / "_factory.txt").string().c_str()); // not Append("\\...") - macOS would take the backslash as part of the filename
 }
 
 void FirstSynth::SendFactoryPresetList()
@@ -780,7 +780,7 @@ void FirstSynth::GetAutoStatePath(WDL_String& path)
 void FirstSynth::GetAutoStatePresetNamePath(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
-  path.Append("\\autosave_presetname.txt");
+  path.Set((std::filesystem::path(path.Get()) / "autosave_presetname.txt").string().c_str()); // see GetFactoryMarksPath()
 }
 
 // called from OnWebContentLoaded() (below), same timing as the existing
