@@ -1,8 +1,14 @@
-# IPlugWebUI
-A basic volume control effect plug-in which uses a platform web view to host an HTML/CSS GUI
+# FirstSynth
+iPlug2 と WebView の HTML/CSS UI を使ったシンセサイザー。
 
-The UI for this example can be found in `resources/web`. On macOS and iOS, it will be copied to the bundle resources folder. On Windows, you currently need to manually package and put the files somewhere.
+UI のソースは `resources/web/` にあります。
 
-You need to be careful if you edit `index.html`, to make sure you are editing the right version.
+macOS 対応は作業中です。ビルドには waki さんの変更版 iPlug2 を使用します。
 
-You can read more about using WebViews [here](https://github.com/iPlug2/iPlug2/wiki/Using-WebViews)
+- [macOS ビルド手順と検証状況](docs/guide/01-macos-build.md)
+- [AUv3 のビルドと検証](docs/guide/02-macos-auv3-distribution.md)
+- [Mac VST3 のビルドと Ableton Live での確認](docs/guide/03-macos-vst3.md)
+- [macOS 配布物の署名・公証と DMG](docs/guide/04-macos-distribution.md)
+- [公開用成果物の集約と Cloudflare での公開](docs/guide/05-release-staging.md)
+- [macOS 対応の設計](docs/design/01-macos-support.md)
+- [ライセンス認証](eni_auth/README.md)

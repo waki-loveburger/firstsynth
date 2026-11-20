@@ -1,6 +1,7 @@
 #include "FirstSynth.h"
 #include "IPlug_include_in_plug_src.h"
 #include "IPlugPaths.h"
+#include "FirstSynthPresets.h"
 #include "LFO.h"
 #include <cmath>
 #include <algorithm>
@@ -14,6 +15,9 @@
 FirstSynth::FirstSynth(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
+#if defined(VST3_API) && defined(OS_MAC)
+  SetEditorSize(1110, 606);
+#endif
   // Subscription licence gate (eni_auth, 2026-08-24). Offline/cheap per eni_auth.h's
   // own contract, safe to call here on the message thread at instantiation - must run
   // before ProcessBlock ever gets called (a DAW host may call it before any editor
@@ -344,16 +348,17 @@ void FirstSynth::OnReset()
 void FirstSynth::GetPresetsDir(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
-  path.Append("\\Presets");
+  path.Set((std::filesystem::path(path.Get()) / "Presets").string().c_str());
 
   std::error_code ec;
   std::filesystem::create_directories(path.Get(), ec); // no-op if it already exists; ec deliberately ignored, matches this file's other fopen()-and-check-for-null style rather than throwing
 }
 
-// Where postbuild-win.bat put the bundled factory presets, resolved the same way
-// IPlugWebViewEditorDelegate::LoadIndexHtml() resolves its own Resources\web:
-// Debug reads the project source tree directly (compile-time __FILE__), Release
-// on Windows looks next to this binary's own module. Anything else -> "".
+// Where the build put the bundled factory presets, resolved the same way
+// IPlugWebViewEditorDelegate::LoadIndexHtml() resolves its own Resources/web:
+// on macOS inside the running bundle (app / AUv3 appex / VST3 all carry their
+// own copy), on Windows the project source tree in Debug and the directory next
+// to this binary's own module in Release. Anything else -> "".
 #if defined OS_WIN && !defined _DEBUG
 extern bool GetCurrentModuleDirWin(WDL_String& outDir); // IPlugWebView_win.cpp, decl mirrors IPlugWebViewEditorDelegate.h
 #endif
@@ -361,8 +366,13 @@ extern bool GetCurrentModuleDirWin(WDL_String& outDir); // IPlugWebView_win.cpp,
 void FirstSynth::GetBundledPresetsDir(WDL_String& path)
 {
   path.Set("");
-#if !defined OS_WIN
-  return; // Windows-only for now, matching the rest of this file's packaging path assumptions
+#if defined OS_MAC
+  WDL_String resources;
+  BundleResourcePath(resources, GetBundleID()); // the bundle this instance actually runs from, not the host's
+  if (resources.GetLength() > 0)
+    path.Set((std::filesystem::path(resources.Get()) / "presets").string().c_str());
+#elif !defined OS_WIN
+  return; // only Windows and macOS package the factory set
 #elif defined _DEBUG
   std::filesystem::path p = std::filesystem::path(__FILE__).parent_path() / "presets";
   path.Set(p.string().c_str());
@@ -383,46 +393,17 @@ void FirstSynth::SeedFactoryPresets()
   if (src.GetLength() == 0)
     return;
 
-  std::error_code ec;
-  if (!std::filesystem::is_directory(src.Get(), ec))
+  WDL_String appData;
+  INIPath(appData, "FirstSynth");
+  if (appData.GetLength() == 0)
     return;
 
-  // One-time guard: once seeded, a user's later deletion of a factory preset
-  // must stick. Suffix is a version - bump it if the shipped factory set is
-  // ever changed/expanded so the new ones get seeded on the next launch.
-  WDL_String marker;
-  INIPath(marker, "FirstSynth");
-  marker.Append("\\.factory_seeded_v1");
-  if (std::filesystem::exists(marker.Get(), ec))
-    return;
-
-  WDL_String dstDir;
-  GetPresetsDir(dstDir); // also creates it
-  std::filesystem::path dst(dstDir.Get());
-
-  for (const auto& entry : std::filesystem::directory_iterator(src.Get(), ec))
-  {
-    if (ec)
-      break;
-    if (!entry.is_regular_file(ec))
-      continue;
-    const std::filesystem::path& p = entry.path();
-    const std::string ext = p.extension().string();
-    const std::string name = p.filename().string();
-    if (ext != ".preset" && name != "_factory.txt")
-      continue;
-
-    std::filesystem::path target = dst / p.filename();
-    if (!std::filesystem::exists(target, ec))
-      std::filesystem::copy_file(p, target, ec); // best-effort; a failed copy just means that preset isn't seeded, not a crash
-  }
-
-  FILE* fp = fopen(marker.Get(), "wb");
-  if (fp)
-  {
-    fputc('1', fp);
-    fclose(fp);
-  }
+  // The copying lives in FirstSynthPresets.h so it can be exercised without a
+  // plug-in instance (tests/factory_presets_test.cpp): never overwrite a file
+  // the user already has, keep the one-time marker in the app data root, and
+  // leave no marker when nothing was copied so the next launch retries.
+  firstsynth::SeedFactoryPresets(std::filesystem::path(src.Get()),
+                                 std::filesystem::path(appData.Get()));
 }
 
 // Preset names double as filenames and arrive from free-text WebView input (UTF8,
@@ -529,7 +510,7 @@ void FirstSynth::SavePresetAs(const char* rawName)
   GetPresetsDir(dir);
 
   WDL_String path;
-  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+  path.Set((std::filesystem::path(dir.Get()) / (std::string(safeName.Get()) + ".preset")).string().c_str());
 
   IByteChunk chunk;
   if (SerializeState(chunk))
@@ -559,7 +540,7 @@ void FirstSynth::LoadPresetByName(const char* rawName)
   GetPresetsDir(dir);
 
   WDL_String path;
-  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+  path.Set((std::filesystem::path(dir.Get()) / (std::string(safeName.Get()) + ".preset")).string().c_str());
 
   FILE* fp = fopen(path.Get(), "rb");
   if (!fp)
@@ -642,7 +623,7 @@ void FirstSynth::DeletePresetByName(const char* rawName)
   GetPresetsDir(dir);
 
   WDL_String path;
-  path.SetFormatted(MAX_WIN32_PATH_LEN, "%s\\%s.preset", dir.Get(), safeName.Get());
+  path.Set((std::filesystem::path(dir.Get()) / (std::string(safeName.Get()) + ".preset")).string().c_str());
 
   std::error_code ec;
   std::filesystem::remove(path.Get(), ec); // ec deliberately ignored, matches this file's other filesystem calls
@@ -730,7 +711,7 @@ static void WriteFactoryMarks(const WDL_String& path, const std::vector<std::str
 void FirstSynth::GetFactoryMarksPath(WDL_String& path)
 {
   GetPresetsDir(path);
-  path.Append("\\_factory.txt");
+  path.Set((std::filesystem::path(path.Get()) / "_factory.txt").string().c_str()); // not Append("\\...") - macOS would take the backslash as part of the filename
 }
 
 void FirstSynth::SendFactoryPresetList()
@@ -791,13 +772,15 @@ void FirstSynth::TogglePresetFactoryMark(const char* rawName)
 void FirstSynth::GetAutoStatePath(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
-  path.Append("\\autosave.state");
+  std::error_code ec;
+  std::filesystem::create_directories(path.Get(), ec);
+  path.Set((std::filesystem::path(path.Get()) / "autosave.state").string().c_str());
 }
 
 void FirstSynth::GetAutoStatePresetNamePath(WDL_String& path)
 {
   INIPath(path, "FirstSynth");
-  path.Append("\\autosave_presetname.txt");
+  path.Set((std::filesystem::path(path.Get()) / "autosave_presetname.txt").string().c_str()); // see GetFactoryMarksPath()
 }
 
 // called from OnWebContentLoaded() (below), same timing as the existing
@@ -1331,8 +1314,31 @@ void FirstSynth::OnGetLocalDownloadPathForFile(const char* fileName, WDL_String&
   localPath.AppendFormatted(MAX_WIN32_PATH_LEN, "/%s", fileName);
 }
 
+#if (defined(AUv3_API) || defined(VST3_API)) && defined(OS_MAC)
+void FirstSynth::OnParentWindowResize(int width, int height)
+{
+  EDITOR_DELEGATE_CLASS::OnParentWindowResize(width, height);
+  WDL_String script;
+  script.SetFormatted(128, "if (typeof FitPluginToSize === 'function') FitPluginToSize(%d,%d);", width, height);
+  EvaluateJavaScript(script.Get());
+}
+#endif
+
+#if defined(VST3_API) && defined(OS_MAC)
+bool FirstSynth::ConstrainEditorResize(int& width, int& height) const
+{
+  const int originalWidth = width, originalHeight = height;
+  width = std::clamp(width, 694, 2080);
+  height = static_cast<int>(std::lround(width * 757.0 / 1387.0));
+  return width == originalWidth && height == originalHeight;
+}
+#endif
+
 void FirstSynth::OnWebContentLoaded()
 {
+#if (defined(AUv3_API) || defined(VST3_API)) && defined(OS_MAC)
+  EvaluateJavaScript("EnablePluginFit();");
+#endif
   // must call the base implementation - it sends the "params" JSON describing every
   // parameter to the UI and triggers OnUIOpen() (which syncs current values); without
   // this, overriding the method here would silently break the entire UI sync

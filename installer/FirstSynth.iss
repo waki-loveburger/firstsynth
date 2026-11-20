@@ -13,10 +13,12 @@
 
 #define MyAppName "FirstSynth"
 #define MyAppVersion "1.0.0"
-; Pre-release tag for the v1.0.0 test period only. Appended to the installer
-; filename so Ito's successive test builds are distinguishable; the installed
-; AppVersion stays "1.0.0". Set to empty for the actual public release.
-#define MyRcTag "_rc2"
+; Pre-release tag, appended to the installer filename so successive test builds
+; of an unreleased version are distinguishable; the installed AppVersion stays
+; "1.0.0". Empty for the 1.0.0 public release (2026-11-20): the installer that
+; gets tested on real hardware is the one that ships, as on macOS. Bin the older
+; FirstSynth_setup_v1.0.0.exe / _rc2.exe before testing this one.
+#define MyRcTag ""
 #define MyAppPublisher "EASYANDNICE INSTRUMENTS"
 #define MyAppURL "https://easyandnicewaki.com/"
 
