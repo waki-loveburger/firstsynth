@@ -79,6 +79,19 @@ make_dmg() {
   hdiutil create -quiet -volname "$4" -srcfolder "$2" -format UDZO -ov "$3"
 }
 
+# Cleanup state for the EXIT trap. The trap body runs after main has returned,
+# so it cannot read main's locals - with `set -u` that ended every *successful*
+# run in "partial: unbound variable" and exit 1, long after the DMG was signed,
+# notarized and stapled (2026-11-20). Hence globals, cleared once the DMG is
+# finished. tests/dist_mac_package_test.sh runs the whole path with stubs.
+dist_partial=""
+dist_submit_zip=""
+discard_partial() {
+  [ -n "$dist_partial" ] && rm -f "$dist_partial"
+  [ -n "$dist_submit_zip" ] && rm -f "$dist_submit_zip"
+  return 0
+}
+
 # notarize <profile> <file> <log>: stops the script unless Apple accepts it,
 # saving Apple's reasons next to the log when it does not.
 notarize() {
@@ -133,7 +146,9 @@ main() {
   # Built under a .partial name and only renamed once it is signed, notarized
   # and stapled, so a half-made DMG never looks like a finished one.
   partial="${dmg%.dmg}.partial.dmg"
-  trap 'rm -f "$partial" "$dist/submit.zip"' EXIT
+  dist_partial="$partial"
+  dist_submit_zip="$dist/submit.zip"
+  trap discard_partial EXIT
 
   if [ "$kind" = app ]; then
     codesign --force --timestamp --options runtime --sign "$sign_id" \
@@ -168,6 +183,7 @@ main() {
   xcrun stapler validate "$partial"
   spctl --assess --type open --context context:primary-signature --verbose=2 "$partial"
   mv "$partial" "$dmg"
+  dist_partial="" # finished: there is nothing half-made left to discard
   shasum -a 256 "$dmg" | tee "$dmg.sha256"
   echo "OK: $dmg  <- share this one"
 }

@@ -112,6 +112,36 @@ check "dist containing src exits with 2" [ $? -eq 2 ]
 check "the guard left the source bundle alone" \
   codesign --verify --deep --strict "$work/src/FirstSynth.app"
 
+# 6. A full run must exit 0 and leave only the finished DMG. Stubs stand in for
+# signing, notarization and Gatekeeper, so no Developer ID or network is needed.
+# Regression for 2026-11-20: the EXIT trap read main's locals, which are gone by
+# the time it runs, so with `set -u` every successful run ended in
+# "partial: unbound variable" and exit 1 - after the DMG had already been
+# signed, notarized and stapled.
+stub="$work/stub"
+mkdir -p "$stub"
+for tool in codesign spctl python3; do
+  printf '#!/bin/sh\nexit 0\n' > "$stub/$tool"
+done
+cat > "$stub/xcrun" <<'STUB'
+#!/bin/sh
+if [ "$1" = notarytool ] && [ "$2" = submit ]; then
+  printf '  id: 00000000-0000-0000-0000-000000000000\n  status: Accepted\n'
+fi
+exit 0
+STUB
+chmod +x "$stub"/*
+has_dmg() { ls "$1"/FirstSynth-*-VST3-macOS-*.dmg >/dev/null 2>&1; }
+has_sha() { ls "$1"/FirstSynth-*-VST3-macOS-*.dmg.sha256 >/dev/null 2>&1; }
+no_partial() { ! ls "$1"/*.partial.dmg >/dev/null 2>&1; }
+fake_bundle "$work/src-run/FirstSynth.vst3" BNDL
+PATH="$stub:$PATH" bash scripts/dist-mac.sh vst3 "$work/src-run/FirstSynth.vst3" "$work/dist-run" >/dev/null 2>&1
+check "a successful run exits 0" [ $? -eq 0 ]
+check "the finished DMG is in the dist directory" has_dmg "$work/dist-run"
+check "its SHA-256 is written next to it" has_sha "$work/dist-run"
+check "no .partial.dmg is left behind" no_partial "$work/dist-run"
+check "the submission ZIP is cleaned up" [ ! -e "$work/dist-run/submit.zip" ]
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures failed"
   exit 1

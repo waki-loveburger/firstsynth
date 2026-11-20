@@ -95,6 +95,26 @@ FAT32 で DMG を作ると、このテストが赤になることを確認済み
 
 ## 記録
 
+2026-11-20、`main` 合流後の作り直し（**これが 1.0.0 の公開候補**。実機確認待ち）:
+
+| 成果物 | 公証 ID | 結果 |
+|---|---|---|
+| `FirstSynth.app` bundle | `4c0c787f-986c-4364-85cc-d9c75bbc8f5b` | Accepted、staple、Gatekeeper `Notarized Developer ID` |
+| `FirstSynth-1.0.0-macOS-arm64.dmg` | `92285f38-1a24-436a-8afd-c1297e0f0c3d` | Accepted、staple、`spctl --type open` accepted |
+| `FirstSynth.vst3` bundle | `cc25905f-43d8-4f8f-b3e6-b59dc819fe86` | Accepted、staple |
+| `FirstSynth-1.0.0-VST3-macOS-arm64.dmg` | `cc1f51aa-5252-4845-8d79-ce1c557bec55` | Accepted、staple、`spctl --type open` accepted |
+
+SHA-256:
+
+- `FirstSynth-1.0.0-macOS-arm64.dmg`: `5f3d429519e476d565f6b3e334d9d06f9f07f36e0e0d2e97a7516290a39cf796`
+- `FirstSynth-1.0.0-VST3-macOS-arm64.dmg`: `4bf2594824c55e5a50b7fda0436799a11eff88b6bf856e020800c5b7b1ba5920`
+
+ビルドは `build-mac-auv3-merge` / `build-mac-vst3-merge`（9 月のディレクトリは CMake 4.5 / Xcode 27.2 で
+configure が通らないので作り直した）。quarantine を付けた DMG から取り出した bundle で、`._*` 0 件・
+`stapler validate`・verify スクリプト・Gatekeeper を確認した。中身は 9/12 のものとは**別物**で、
+Key Transpose を含む 118 パラメーター、★ 印の目録の同梱、パス連結の修正が入っている。
+**共有ドライブの 1.0.0 DMG はまだ差し替えていない**（実機確認の後に、古いものを消して置き換える）。
+
 2026-09-12、`v1.0.0-macos.1`（手作業。当時は ZIP で配布）:
 
 | 成果物 | 公証 ID | 結果 |

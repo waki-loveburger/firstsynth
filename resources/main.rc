@@ -194,11 +194,13 @@ END
 
 // 4th field = pre-release build counter for the v1.0.0 test period
 // (rc1 = the 2026-09-05 build Ito first tested, rc2 = this one).
-// The displayed version strings below stay "1.0.0"; reset the 4th
-// field to 0 for the actual public release.
+// The displayed version strings below stay "1.0.0"; the 4th field marks a
+// pre-release build (rc1 = 0 before any test build, rc2 = 2) and is back to 0
+// for the 1.0.0 public release (2026-11-20). Bump it again only while handing
+// round test builds of an unreleased version.
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,2
- PRODUCTVERSION 1,0,0,2
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
