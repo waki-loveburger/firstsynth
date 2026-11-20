@@ -69,7 +69,7 @@ bash tests/dist_mac_package_test.sh
 
 単体アプリの MIDI 入力は初期状態で `off`。Preferences で接続した MIDI コントローラー（今回の実機は Arturia MiniLab mkII）と Audio Output を選択する。
 
-macOS では `Resources/presets` の出荷用37プリセットを初回起動時に Application Support/FirstSynth/Presets へ配置する。同名ファイルを上書きせず、配置後の削除も尊重する。元データは共有レポ `origin/main` の `06fc5ab`。その後追加されたパラメーターの値は、このブランチのシンセでは適用されない。
+macOS では `Resources/presets` の出荷用37プリセットと ★ 印の目録 `_factory.txt` を、初回起動時に Application Support/FirstSynth/Presets へ配置する。同名ファイルを上書きせず、配置後の削除も尊重する。配置に失敗したときは印を書かないので、次の起動でやり直す。置き場の解決は `FirstSynth::GetBundledPresetsDir()`、コピーは `FirstSynthPresets.h`（`tests/factory_presets_test.cpp` が検査する）。2026-11-20 に `main` を合流したので、プリセットの元データと本体のパラメーター数（118）は Windows 側と同じ。
 
 プリセット/文字化け修正版のビルドと37ファイルの同梱は確認済み。終了操作がキャンセルされたため、ユーザー用フォルダへの初回配置と Audio Output 表示は手動再起動後の確認待ち。旧プロセスの settings.ini は文字化けしたままなので、修正版の Preferences で出力を選び直す。
 

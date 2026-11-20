@@ -28,6 +28,8 @@
 
 ## Status log
 
+- 2026-11-20: `main` を合流（`2662e1f`）。Windows 側の v1.0.0 リリース準備（Inno Setup インストーラー、出荷プリセット37個、Key Transpose = param 117 で `kNumParams` 118、マニュアル刷新、rc 札）がこの枝に乗った。衝突は 5 件。出荷プリセットの初回配置を両側が別々に実装していたので、置き場の解決は本体の `SeedFactoryPresets()`、コピーはテスト済みの `FirstSynthPresets.h` という分担に寄せた。合流で Windows 由来の `Append("\\...")` が初めて macOS でコンパイルされるようになり、`_factory.txt` と `autosave_presetname.txt` のパスが壊れる穴が見つかったので、`tests/storage_paths_test.rb` に検査を足してから直した。CMake の glob が `*.preset` だけで ★ 印の目録が bundle に入っていなかったのも直し、`verify-auv3.py` / `verify-vst3.py` に目録と実体の一致検査を足した。Release の AUv3 / VST3 をビルドして verify・AUv3 表示テスト（両順序）・DMG 梱包テスト・回帰テスト一式が成功。実機での発音・DAW 読込・認証はこれから。
+
 - 2026-09-22: `scripts/dist-mac.sh` を MediSynth の現行に揃えた（引数のガード、出荷 bundle への verify、公証拒否時の理由保存、README 同梱、`.partial` DMG）。`scripts/verify-auv3.py` / `verify-vst3.py` を移植（FirstSynth の appex は `files.user-selected` を持たないので要求しない）。AUv3 表示テストの計測をポーリングにし、両順序 7/7。
 - 2026-09-22: MediSynth lane の指摘で、macOS の plist に書かれた版（文字列・AUv3 の整数版・最低 OS）が `config.h` から取り残される穴を塞いだ。configure で検査して止める。`IPLUG_DEPLOY_PLUGINS` は CMakeLists で OFF に固定（iPlug2 の既定 ON は `~/Applications` の app を build tree への symlink に置き換える）。検証中に Xcode 27 の SDK が deployment target 11.3 を拒否することが分かり、最低対応 macOS を 12.0 に上げた（mako 決定、MediSynth と共通）。
 - 2026-09-21: 斎藤さんの MacBook で FirstSynth が Gatekeeper に拒否された。共有ドライブに旧ビルドが残っていたことと、手順書どおりに `ditto -c -k --keepParent` で作った配布 ZIP が Finder 以外の展開で AppleDouble `._*` を bundle 内に残し、署名の封印を破ることが原因と見ている。MediSynth の `scripts/dist-mac.sh` を移植し、配布を署名・公証・staple 済みの DMG に統一した（mako 決定、MediSynth と共通）。梱包部分は関数に分け、事故の回帰テスト `tests/dist_mac_package_test.sh` を追加。手順は `docs/guide/04-macos-distribution.md`。creo `mem_1CfGcTACNPbopUr5rq8TvW`。同日、配布 ZIP の作成もやめて DMG だけにした（mako。MediSynth は GitHub Releases 用に ZIP を残す）。
