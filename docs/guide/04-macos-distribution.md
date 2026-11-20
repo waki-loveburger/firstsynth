@@ -99,21 +99,26 @@ FAT32 で DMG を作ると、このテストが赤になることを確認済み
 
 | 成果物 | 公証 ID | 結果 |
 |---|---|---|
-| `FirstSynth.app` bundle | `4c0c787f-986c-4364-85cc-d9c75bbc8f5b` | Accepted、staple、Gatekeeper `Notarized Developer ID` |
-| `FirstSynth-1.0.0-macOS-arm64.dmg` | `92285f38-1a24-436a-8afd-c1297e0f0c3d` | Accepted、staple、`spctl --type open` accepted |
-| `FirstSynth.vst3` bundle | `cc25905f-43d8-4f8f-b3e6-b59dc819fe86` | Accepted、staple |
-| `FirstSynth-1.0.0-VST3-macOS-arm64.dmg` | `cc1f51aa-5252-4845-8d79-ce1c557bec55` | Accepted、staple、`spctl --type open` accepted |
+| `FirstSynth.app` bundle | `d22cfa83-3de7-40fd-9378-657fbe59a733` | Accepted、staple、Gatekeeper `Notarized Developer ID` |
+| `FirstSynth-1.0.0-macOS-arm64.dmg` | `bc001f50-71aa-4053-8a53-548cc076938c` | Accepted、staple、`spctl --type open` accepted |
+| `FirstSynth.vst3` bundle | `8da1a526-5584-4b9c-8c1f-82b6aa518314` | Accepted、staple |
+| `FirstSynth-1.0.0-VST3-macOS-arm64.dmg` | `234437dc-3fa6-44de-a005-b1e543b9f2a0` | Accepted、staple、`spctl --type open` accepted |
 
 SHA-256:
 
-- `FirstSynth-1.0.0-macOS-arm64.dmg`: `5f3d429519e476d565f6b3e334d9d06f9f07f36e0e0d2e97a7516290a39cf796`
-- `FirstSynth-1.0.0-VST3-macOS-arm64.dmg`: `4bf2594824c55e5a50b7fda0436799a11eff88b6bf856e020800c5b7b1ba5920`
+- `FirstSynth-1.0.0-macOS-arm64.dmg`: `628fde0cd1b9225bf3ba4402b64cef2be66e21caf983d5b021d5d5a310245d1f`
+- `FirstSynth-1.0.0-VST3-macOS-arm64.dmg`: `b88f33afd0d3aa1ab7de6f16fec5961464ed4d7d69e7b0a06754462ba8babb18`
 
 ビルドは `build-mac-auv3-merge` / `build-mac-vst3-merge`（9 月のディレクトリは CMake 4.5 / Xcode 27.2 で
 configure が通らないので作り直した）。quarantine を付けた DMG から取り出した bundle で、`._*` 0 件・
-`stapler validate`・verify スクリプト・Gatekeeper を確認した。中身は 9/12 のものとは**別物**で、
-Key Transpose を含む 118 パラメーター、★ 印の目録の同梱、パス連結の修正が入っている。
+`stapler validate`・verify スクリプト・Gatekeeper を確認し、`Resources/presets/_factory.txt` が 37 行
+あることも見た。中身は 9/12 のものとは**別物**で、Key Transpose を含む 118 パラメーター、
+★ 印の目録の同梱、パス連結の修正が入っている。
 **共有ドライブの 1.0.0 DMG はまだ差し替えていない**（実機確認の後に、古いものを消して置き換える）。
+
+> 同日の 1 回目（公証 `4c0c787f…` / `92285f38…` / `cc25905f…` / `cc1f51aa…`）は、
+> 9/12 以前に配置を済ませた既存インストールへ ★ 印の目録が届かない穴が見つかったため破棄した。
+> **共有もしていない**ので、同じ版の別物は出回っていない。
 
 2026-09-12、`v1.0.0-macos.1`（手作業。当時は ZIP で配布）:
 

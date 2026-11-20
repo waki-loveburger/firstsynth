@@ -30,9 +30,22 @@ int main(int argc, char** argv)
   check(fs::exists(dst / "Presets" / "_factory.txt"), "missing factory marks");
   std::getline(std::ifstream(dst / "Presets" / "_factory.txt"), text);
   check(text == "Pad", "factory marks not copied verbatim");
+  // An install seeded before the marks sidecar shipped (macOS up to 1.0.0's
+  // build of 2026-09-12: the presets arrived, _factory.txt did not, and the
+  // one-time marker is set) must still get the marks - without undoing the
+  // user's deletions. An empty marks file is still a file, so a missing one
+  // cannot mean "the user unmarked everything".
   fs::remove(dst / "Presets" / "日本語.preset");
+  fs::remove(dst / "Presets" / "_factory.txt");
   check(firstsynth::SeedFactoryPresets(src, dst), "second seed failed");
   check(!fs::exists(dst / "Presets" / "日本語.preset"), "deleted preset restored");
+  check(fs::exists(dst / "Presets" / "_factory.txt"), "marks not delivered to an install seeded before they shipped");
+  std::getline(std::ifstream(dst / "Presets" / "_factory.txt"), text);
+  check(text == "Pad", "late marks not copied verbatim");
+  std::ofstream(dst / "Presets" / "_factory.txt") << "user marks";
+  check(firstsynth::SeedFactoryPresets(src, dst), "third seed failed");
+  std::getline(std::ifstream(dst / "Presets" / "_factory.txt"), text);
+  check(text == "user marks", "existing marks overwritten on a later launch");
   check(!firstsynth::SeedFactoryPresets(root / "missing", root / "retry"), "missing source treated as success");
   check(firstsynth::SeedFactoryPresets(src, root / "retry"), "retry failed");
   std::getline(std::ifstream(root / "retry" / "Presets" / "_factory.txt"), text);
