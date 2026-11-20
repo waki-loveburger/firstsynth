@@ -61,9 +61,13 @@ class KnobControl extends HTMLElement {
     const circleStrokeWidth = parseFloat(this.getAttribute('circle-stroke-width')) || 2;
     const circleFillColor = this.getAttribute('circle-fill-color') || 'var(--knob-circle-fill, #18202d)';
     const pointerColor = this.getAttribute('pointer-color') || 'var(--knob-pointer, #2563eb)';
-    const pointerWidth = parseFloat(this.getAttribute('pointer-width')) || 4;
+    // 2026-09-06: pointer bumped 4->8, value-arc 3->5 for readability - the
+    // coloured position line and movement arc read thin against the lighter
+    // light-mode knob face (2026-09-06 change to --knob-circle-fill in index.html).
+    // value-arc-width also sets the neutral track-bg stroke below - same ring.
+    const pointerWidth = parseFloat(this.getAttribute('pointer-width')) || 8;
     const valueArcColor = this.getAttribute('value-arc-color') || 'var(--knob-value-arc, #2563eb)';
-    const valueArcWidth = parseFloat(this.getAttribute('value-arc-width')) || 3;
+    const valueArcWidth = parseFloat(this.getAttribute('value-arc-width')) || 5;
     const trackBgColor = this.getAttribute('track-bg-color') || 'var(--knob-track-bg, #c9ced6)';
     
     this.attachShadow({ mode: 'open' });
@@ -359,6 +363,14 @@ class KnobControl extends HTMLElement {
     
     // Expose updateValue method with a different name to avoid conflicts
     this.updateValueFromHost = (normalizedValue) => updateValue(normalizedValue, true);
+
+    // 2026-08-26: re-renders the pointer/arc/label from whatever normalized
+    // value this knob already has, without changing it - currentNorm itself
+    // has no public getter, so callers that mutate this knob's min/max/
+    // shapeExponent *after* construction (e.g. a dev-only alternate-curve
+    // A/B test) have no other way to force the displayed number to reflect
+    // that change until the next real drag/host update happens to occur.
+    this.refreshDisplay = () => updateValue(currentNorm, true);
   }
   
   connectedCallback() {

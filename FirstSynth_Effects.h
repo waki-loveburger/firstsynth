@@ -183,15 +183,27 @@ public:
     mWritePos = 0;
   }
 
-  void SetTimeMs(T ms) { mTimeMs = ms; }
+  // 2026-08-25 user request: tempo-sync, mirroring the existing Pitch/Filter/Amp
+  // LFO Rate(Hz)/Rate(Tempo)/Sync pattern - but DelayEffect isn't an
+  // LFO<T>/IOscillator<T> (see FirstSynth.h's own comment on kParamDelayTimeTempo),
+  // so it has no rate/phase concept to hook a sync mode into. Ported just the
+  // division->beat-fraction math from iPlug2's own LFO<>::GetQNScalar()
+  // (Extras/LFO.h) instead of pulling in an LFO/oscillator dependency for a
+  // plain delay line. SetTimeMs()/SetTempo()/SetSyncMode()/SetDivision() all
+  // funnel into mEffectiveTimeMs via UpdateSyncedTimeMs() - Process() only ever
+  // reads that one value, so it doesn't need to know sync is even a concept.
+  void SetTimeMs(T ms) { mTimeMs = ms; UpdateSyncedTimeMs(); }
   void SetFeedback(T feedback) { mFeedback = feedback; }
   void SetMix(T mix) { mMix = mix; }
   void SetPingPong(bool pingPong) { mPingPong = pingPong; }
+  void SetTempo(double bpm) { mTempo = bpm; UpdateSyncedTimeMs(); }
+  void SetSyncMode(bool sync) { mSyncMode = sync; UpdateSyncedTimeMs(); }
+  void SetDivision(int division) { mDivision = std::max(0, std::min(division, kNumDivisions - 1)); UpdateSyncedTimeMs(); }
 
   void Process(T& l, T& r)
   {
     int size = (int) mBufferL.size();
-    int delaySamples = std::min((int) (mTimeMs * (T) 0.001 * mSampleRate), size - 1);
+    int delaySamples = std::min((int) (mEffectiveTimeMs * (T) 0.001 * mSampleRate), size - 1);
     int readPos = (mWritePos - delaySamples + size) % size;
 
     T delayedL = mBufferL[readPos];
@@ -223,11 +235,54 @@ public:
   }
 
 private:
+  static constexpr int kNumDivisions = 15; // matches iPlug2 LFO.h's ETempoDivison/LFO_TEMPODIV_VALIST exactly, 64th through 8/1
+
+  // exact copy of iPlug2's own LFO<>::GetQNScalar() table (Extras/LFO.h) - a
+  // scalar >1 means "shorter than a quarter note" (e.g. 1/16 = 4/4), <1 means
+  // "longer" (e.g. 2/1 = 0.5/4) - kept in sync manually with that table the same
+  // way this project's other DSP-mirroring code (e.g. eq-curve-display.js) is.
+  static double GetQNScalar(int division)
+  {
+    static constexpr double scalars[kNumDivisions] = {
+      64./4., 32./4., 24./4., 16./4., 12./4., 9./4., 8./4., 6./4.,
+      4./4., 3./4., 2./4., 1./4., 0.5/4., 0.25/4., 0.125/4.
+    };
+    return scalars[division];
+  }
+
+  // Recomputed on every setter above rather than inside Process() itself - this
+  // is called far less often (only on an actual param change) than Process()
+  // (every sample), and keeps Process() itself a single array read, unchanged
+  // in cost regardless of whether sync is on.
+  void UpdateSyncedTimeMs()
+  {
+    if (mSyncMode)
+    {
+      double msPerBeat = 60000. / (mTempo <= 0. ? 120. : mTempo);
+      double synced = msPerBeat / GetQNScalar(mDivision);
+      // Clamped to the same [10, 2000]ms range kParamDelayTime's own InitDouble
+      // call already declares (FirstSynth.cpp) - not the buffer's real ~2100ms
+      // capacity, so a slow-tempo+long-division combination (e.g. 8/1 at 40 BPM
+      // = 48000ms) can never silently desync the displayed knob position from
+      // what Process() actually plays (which a raw buffer-capacity clamp,
+      // enforced only inside Process() as before, would do).
+      mEffectiveTimeMs = (T) std::max(10., std::min(synced, 2000.));
+    }
+    else
+    {
+      mEffectiveTimeMs = mTimeMs;
+    }
+  }
+
   double mSampleRate = 44100.;
   T mTimeMs = 300.;
   T mFeedback = 0.3;
   T mMix = 0.3;
   bool mPingPong = false;
+  double mTempo = 120.;
+  int mDivision = 11; // k1 ("1/1") - matches the LFOs' own InitEnum default
+  bool mSyncMode = false;
+  T mEffectiveTimeMs = 300.; // what Process() actually reads - see UpdateSyncedTimeMs()
   std::vector<T> mBufferL, mBufferR;
   int mWritePos = 0;
 };

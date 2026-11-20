@@ -76,15 +76,30 @@ function biquadMagDb(c, w) {
   return 20 * Math.log10(Math.max(mag, 1e-6));
 }
 
-// Custom UI widget, no interaction of its own - purely a readout, same pattern as
-// waveform-display.js (see that file's own comment). Band index 0 = Low Shelf,
-// 1-3 = Peaking, 4 = High Shelf, matching ParametricEQEffect's band layout exactly.
+// Custom UI widget - was a pure readout, same pattern as waveform-display.js,
+// until 2026-08-25 added mouse/touch dragging of the per-band markers (user
+// request). Band index 0 = Low Shelf, 1-3 = Peaking, 4 = High Shelf, matching
+// ParametricEQEffect's band layout exactly.
 class EQCurveDisplay extends HTMLElement {
   static REF_SAMPLE_RATE = 48000;
+  // Axis range - deliberately wider than the real Gain param range below, so
+  // a band sitting at its max/min doesn't render right at the very edge of
+  // the chart.
   static MIN_DB = -18;
   static MAX_DB = 18;
   static MIN_FREQ = 20;
   static MAX_FREQ = 20000;
+  // The *real* kParamEQ*Gain range (FirstSynth.cpp's InitDouble calls) -
+  // dragging must clamp to this, not the wider axis range above, or it could
+  // ask for a dB value the actual param can't represent.
+  static PARAM_MIN_DB = -15;
+  static PARAM_MAX_DB = 15;
+  // 2026-08-25 user request: "ポイントをもう少し大きく表示してください" (make
+  // the points a bit bigger) - also doubles as the pointer hit-test radius
+  // (in the same canvas-internal 600x150 coordinate space the points are
+  // drawn in), so bigger dots are also easier to actually grab.
+  static POINT_RADIUS = 6;
+  static POINT_HIT_RADIUS = 11;
 
   constructor() {
     super();
@@ -92,6 +107,7 @@ class EQCurveDisplay extends HTMLElement {
     this.freq = [100, 300, 1000, 3000, 8000];
     this.gainDb = [0, 0, 0, 0, 0];
     this.q = [0.7, 0.7, 0.7, 0.7, 0.7]; // unused for bands 0/4 (shelf)
+    this.draggingBand = null;
 
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.innerHTML = `
@@ -105,6 +121,8 @@ class EQCurveDisplay extends HTMLElement {
         height: 100%;
         background-color: var(--surface-subtle, #eef1f5);
         border-radius: 8px;
+        cursor: pointer;
+        touch-action: none;
       }
     </style>
     <canvas width="600" height="150"></canvas>
@@ -112,12 +130,116 @@ class EQCurveDisplay extends HTMLElement {
 
     this.canvas = this.shadowRoot.querySelector('canvas');
     this.ctx = this.canvas.getContext('2d');
+    this.canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     this.draw();
   }
 
   setFreq(band, hz) { this.freq[band] = hz; this.draw(); }
   setGain(band, db) { this.gainDb[band] = db; this.draw(); }
   setQ(band, q) { this.q[band] = q; this.draw(); }
+
+  // Converts a pointer event's page-space position into this.canvas's own
+  // internal 600x150 coordinate space - the canvas's *displayed* CSS size
+  // (width:100%/height:100%, see the <style> above) is very likely a
+  // different physical pixel size than that internal buffer, so client
+  // coordinates need rescaling before they mean anything here.
+  getCanvasPoint(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }
+
+  // Same freqToX/dbToY math as draw() below, duplicated rather than shared -
+  // draw() computes them as closures over its own local w/h, and threading
+  // those through as parameters everywhere read worse than the small
+  // duplication.
+  findBandAt(cx, cy) {
+    const { MIN_DB, MAX_DB, MIN_FREQ, MAX_FREQ, POINT_HIT_RADIUS } = EQCurveDisplay;
+    const w = this.canvas.width, h = this.canvas.height;
+    const logRange = Math.log10(MAX_FREQ / MIN_FREQ);
+    const dbToY = (db) => h - ((db - MIN_DB) / (MAX_DB - MIN_DB)) * h;
+    const freqToX = (f) => (Math.log10(f / MIN_FREQ) / logRange) * w;
+
+    let closestBand = null;
+    let closestDist = POINT_HIT_RADIUS;
+    for (let band = 0; band < 5; band++) {
+      const x = freqToX(Math.max(MIN_FREQ, Math.min(MAX_FREQ, this.freq[band])));
+      const y = dbToY(Math.max(MIN_DB, Math.min(MAX_DB, this.gainDb[band])));
+      const dist = Math.hypot(cx - x, cy - y);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestBand = band;
+      }
+    }
+    return closestBand;
+  }
+
+  onPointerDown(e) {
+    const { x, y } = this.getCanvasPoint(e);
+    const band = this.findBandAt(x, y);
+    if (band === null) return; // missed every point - not a drag, leave the click alone
+
+    e.preventDefault();
+    this.draggingBand = band;
+    this.canvas.style.cursor = 'grabbing';
+    // fired once per gesture (not per pointermove, unlike 'point-drag' below) -
+    // lets index.html pair BPCFUI/EPCFUI around the whole drag, same "begin/end
+    // gesture" contract knob-control.js's own startDrag()/onEnd() already
+    // follow, so DAW automation-lane recording sees one gesture, not a storm of
+    // disconnected single-value writes.
+    this.dispatchEvent(new CustomEvent('point-drag-start', { detail: { band }, bubbles: true }));
+    this.updateFromPointer(x, y, band);
+
+    const onMove = (ev) => {
+      const p = this.getCanvasPoint(ev);
+      this.updateFromPointer(p.x, p.y, band);
+    };
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      this.draggingBand = null;
+      this.canvas.style.cursor = 'pointer';
+      this.draw();
+      this.dispatchEvent(new CustomEvent('point-drag-end', { detail: { band }, bubbles: true }));
+    };
+    // listens on document, not the canvas, same reasoning as knob-control.js's
+    // own startDrag() - the pointer can move faster than the mouse stays over
+    // this (fairly small) canvas while dragging
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+  }
+
+  // cx/cy are in canvas-internal coordinates (see getCanvasPoint()) - clamped
+  // to the chart's own bounds first (so dragging past an edge pins the point
+  // there instead of extrapolating nonsense), then converted to real Hz/dB
+  // and clamped again to the real param range (PARAM_MIN_DB/MAX_DB - the
+  // chart's own axis is intentionally wider, see its own comment).
+  updateFromPointer(cx, cy, band) {
+    const { MIN_DB, MAX_DB, MIN_FREQ, MAX_FREQ, PARAM_MIN_DB, PARAM_MAX_DB } = EQCurveDisplay;
+    const w = this.canvas.width, h = this.canvas.height;
+    const logRange = Math.log10(MAX_FREQ / MIN_FREQ);
+
+    const xClamped = Math.max(0, Math.min(w, cx));
+    const yClamped = Math.max(0, Math.min(h, cy));
+
+    const freq = MIN_FREQ * Math.pow(MAX_FREQ / MIN_FREQ, xClamped / w);
+    const dbRaw = MAX_DB - (yClamped / h) * (MAX_DB - MIN_DB); // inverse of draw()'s dbToY
+
+    this.freq[band] = Math.max(MIN_FREQ, Math.min(MAX_FREQ, freq));
+    this.gainDb[band] = Math.max(PARAM_MIN_DB, Math.min(PARAM_MAX_DB, dbRaw));
+    this.draw();
+
+    // 'this', not an inner shadow-DOM node, so this already reaches listeners
+    // outside the shadow root without needing composed:true - same pattern
+    // knob-control.js's own 'user-change' event uses.
+    this.dispatchEvent(new CustomEvent('point-drag', {
+      detail: { band, freq: this.freq[band], gainDb: this.gainDb[band] },
+      bubbles: true,
+    }));
+  }
 
   bandCoeffs(band, sampleRate) {
     if (band === 0) return calcLowShelfCoeffs(this.freq[0], this.gainDb[0], sampleRate);
@@ -177,14 +299,28 @@ class EQCurveDisplay extends HTMLElement {
     }
     ctx.stroke();
 
-    // per-band freq/gain markers - a quick visual anchor for which dot is which knob
-    ctx.fillStyle = getComputedStyle(this).getPropertyValue('--accent') || '#2563eb';
+    // per-band freq/gain markers - a quick visual anchor for which dot is which
+    // knob, and draggable (see onPointerDown()/updateFromPointer() above). The
+    // currently-dragged one (if any) gets a lighter fill + outline ring, so
+    // there's clear feedback for which point is actually under the pointer.
+    const accentColor = getComputedStyle(this).getPropertyValue('--accent') || '#2563eb';
     for (let band = 0; band < 5; band++) {
       const x = freqToX(Math.max(MIN_FREQ, Math.min(MAX_FREQ, this.freq[band])));
       const y = dbToY(Math.max(MIN_DB, Math.min(MAX_DB, this.gainDb[band])));
+      const isDragging = this.draggingBand === band;
+
       ctx.beginPath();
-      ctx.arc(x, y, 3, 0, 2 * Math.PI);
+      ctx.arc(x, y, EQCurveDisplay.POINT_RADIUS, 0, 2 * Math.PI);
+      ctx.fillStyle = accentColor;
       ctx.fill();
+
+      if (isDragging) {
+        ctx.beginPath();
+        ctx.arc(x, y, EQCurveDisplay.POINT_RADIUS + 3, 0, 2 * Math.PI);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = getComputedStyle(this).getPropertyValue('--surface') || '#ffffff';
+        ctx.stroke();
+      }
     }
   }
 }

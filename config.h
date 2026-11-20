@@ -6,7 +6,7 @@
 #define PLUG_MFR_ID 'EZAN'
 #define PLUG_URL_STR "https://easyandnicewaki.com/"
 #define PLUG_EMAIL_STR "easyandnice@ymail.ne.jp"
-#define PLUG_COPYRIGHT_STR "Copyright 2025 EASYANDNICE"
+#define PLUG_COPYRIGHT_STR "Copyright 2026 EASYANDNICE"
 #define PLUG_CLASS_NAME FirstSynth
 
 #define BUNDLE_NAME "FirstSynth"
